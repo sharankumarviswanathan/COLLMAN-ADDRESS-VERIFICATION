@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 
 export function StepStreetPhoto() {
-  const { progress, updateProgress, nextStep, prevStep } = useVerification();
+  const { employee, progress, updateProgress, nextStep, prevStep } = useVerification();
   const [cameraActive, setCameraActive] = useState(false);
   const [facingMode, setFacingMode] = useState('environment'); // default rear camera for street board
   const [previewImg, setPreviewImg] = useState(progress.streetPhotoUrl || null);
@@ -86,7 +86,7 @@ export function StepStreetPhoto() {
           setValidating(false);
         });
     }
-  }, [previewImg, cameraActive]);
+  }, [previewImg, cameraActive, employee?.hrAddress]);
 
   // When cameraActive changes, ensure the video srcObject is attached and playing
   useEffect(() => {
