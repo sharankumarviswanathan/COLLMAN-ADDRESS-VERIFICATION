@@ -266,23 +266,24 @@ export function StepStreetPhoto() {
           autoPlay
           playsInline
           muted
-          className="camera-video"
+          className={`camera-video ${facingMode === 'user' ? 'mirrored' : ''}`}
           style={{
-            display: cameraActive ? 'block' : 'none',
-            transform: facingMode === 'user' ? 'scaleX(-1)' : 'none'
+            display: cameraActive ? 'block' : 'none'
           }}
         />
 
-        {/* Camera Switch Status Pill (Top of Viewfinder) */}
+        {/* Compact Camera Status Pill (Top-left overlay) */}
         {cameraActive && (
           <button
             type="button"
-            className="camera-switch-pill"
+            className="camera-status-pill"
             onClick={toggleCamera}
-            title={facingMode === 'user' ? 'Switch to Back Camera' : 'Switch to Front Camera'}
+            title="Tap to switch camera"
+            aria-label="Switch Camera"
           >
-            <SwitchCamera size={16} />
-            <span>{facingMode === 'user' ? 'Front Camera' : 'Back Camera'} (Tap to switch)</span>
+            <span className="camera-status-dot" />
+            <SwitchCamera size={13} />
+            <span>{facingMode === 'user' ? 'Front Camera' : 'Back Camera'}</span>
           </button>
         )}
 
@@ -297,7 +298,7 @@ export function StepStreetPhoto() {
               title={facingMode === 'user' ? 'Switch to Back Camera' : 'Switch to Front Camera'}
               aria-label="Switch Camera"
             >
-              <SwitchCamera size={22} />
+              <SwitchCamera size={20} />
             </button>
 
             <button
@@ -306,6 +307,7 @@ export function StepStreetPhoto() {
               className="btn-snap"
               onClick={takeSnapshot}
               title="Capture Street Board Photo"
+              aria-label="Capture Photo"
             >
               <div className="btn-snap-inner" />
             </button>
@@ -315,6 +317,7 @@ export function StepStreetPhoto() {
               className="btn-camera-close"
               onClick={stopCamera}
               title="Close Camera"
+              aria-label="Close Camera"
             >
               <X size={20} />
             </button>
@@ -323,25 +326,12 @@ export function StepStreetPhoto() {
 
         {/* Static Preview Mode if snapshot or upload taken */}
         {!cameraActive && previewImg && (
-          <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+          <div className="camera-preview-img-wrapper">
             <img
               src={previewImg}
               alt="Street Board Preview"
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             />
-            <div
-              style={{
-                position: 'absolute',
-                top: 12,
-                right: 12,
-                backgroundColor: 'rgba(0, 0, 0, 0.65)',
-                color: '#FFFFFF',
-                padding: '4px 10px',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '0.8rem',
-                fontWeight: 600
-              }}
-            >
+            <div className="camera-captured-badge">
               Street Board Captured
             </div>
           </div>
@@ -349,7 +339,7 @@ export function StepStreetPhoto() {
 
         {/* Empty State */}
         {!cameraActive && !previewImg && (
-          <div style={{ textAlign: 'center', color: '#94A3B8', padding: '24px' }}>
+          <div className="camera-empty-state">
             <Signpost size={56} style={{ margin: '0 auto 12px auto', opacity: 0.85 }} />
             <p style={{ fontSize: '0.92rem', color: '#CBD5E1' }}>Tap below to open camera & take street board photo</p>
           </div>
