@@ -5,6 +5,19 @@ const fs = require('fs');
 let sharedWorker = null;
 let workerInitPromise = null;
 
+function isValidImageBuffer(buf) {
+  if (!buf || !Buffer.isBuffer(buf) || buf.length < 50) return false;
+  // JPEG: FF D8 FF
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true;
+  // PNG: 89 50 4E 47
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true;
+  // WebP: RIFF ... WEBP
+  if (buf.length >= 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return true;
+  // GIF: GIF
+  if (buf.length >= 3 && buf.toString('ascii', 0, 3) === 'GIF') return true;
+  return false;
+}
+
 async function getOcrWorker() {
   if (sharedWorker) return sharedWorker;
   if (!workerInitPromise) {
@@ -15,6 +28,8 @@ async function getOcrWorker() {
         return worker;
       } catch (err) {
         console.warn('Failed to initialize shared Tesseract worker:', err.message);
+        sharedWorker = null;
+        workerInitPromise = null;
         return null;
       }
     })();
@@ -182,15 +197,17 @@ async function validateImage({ imageBuffer, photoType, clientMetrics = {}, hrAdd
 
   // OCR extraction for text/content analysis where applicable
   let ocrText = clientMetrics.ocrText || '';
-  if (!ocrText && imageBuffer) {
+  if (!ocrText && isValidImageBuffer(imageBuffer)) {
     try {
       const worker = await getOcrWorker();
       if (worker) {
         const ret = await worker.recognize(imageBuffer);
-        ocrText = ret.data.text || '';
+        ocrText = ret?.data?.text || '';
       }
     } catch (ocrErr) {
       console.warn('OCR error during image validation:', ocrErr.message);
+      sharedWorker = null;
+      workerInitPromise = null;
     }
   }
   result.extractedText = (ocrText || '').trim();

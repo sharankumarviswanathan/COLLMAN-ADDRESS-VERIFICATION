@@ -5,6 +5,14 @@ const fs = require('fs');
 const { initDatabase } = require('./db/database');
 const { generalApiLimiter } = require('./middleware/rateLimiter');
 
+// Prevent unhandled worker or async errors from crashing the Node.js server
+process.on('uncaughtException', (err) => {
+  console.error('[CRITICAL] Uncaught exception prevented from crashing server:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[CRITICAL] Unhandled promise rejection prevented from crashing server:', reason);
+});
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 

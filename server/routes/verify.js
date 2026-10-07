@@ -143,10 +143,23 @@ async function recordPhotoEvidence({
 function getBufferFromBase64(base64Str) {
   if (!base64Str || typeof base64Str !== 'string') return null;
   try {
+    // If it points to an existing uploads file or disk path
+    if (base64Str.includes('/uploads/') || base64Str.startsWith('uploads/')) {
+      const fileName = path.basename(base64Str.split('?')[0]);
+      const filePath = path.join(uploadsDir, fileName);
+      if (fs.existsSync(filePath)) {
+        return fs.readFileSync(filePath);
+      }
+    }
+    if (fs.existsSync(base64Str)) {
+      return fs.readFileSync(base64Str);
+    }
     let clean = base64Str;
     if (clean.includes(',')) clean = clean.split(',')[1];
     clean = clean.replace(/\s/g, '');
-    return Buffer.from(clean, 'base64');
+    const buf = Buffer.from(clean, 'base64');
+    if (buf.length < 50) return null;
+    return buf;
   } catch (e) {
     return null;
   }
