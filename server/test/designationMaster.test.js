@@ -5,7 +5,7 @@
 const assert = require('assert');
 const { query } = require('../db/database');
 
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = `http://localhost:${process.env.TEST_PORT || 5000}/api`;
 
 async function request(url, options = {}) {
   const res = await fetch(`${API_BASE}${url}`, {

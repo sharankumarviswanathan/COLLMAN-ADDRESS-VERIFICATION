@@ -1,20 +1,22 @@
 /**
- * Isolated Test Runner for Phase D
- * - Runs pure unit tests (strictPhotoValidationRules) independently before server startup
- * - Initializes and seeds unique temporary SQLite DB via isolated seed subprocess
- * - Uses process.execPath for all child process invocations
+ * Isolated Test Runner for GSD Phase 1 — Plan 1.1 (All 19 Test Suites)
+ * - Executes all 19 test suites in 3 distinct deterministic tiers
+ * - Tier 1: Pure Unit Tests (strictPhotoValidationRules, googleGeocoding)
+ * - Tier 2: Direct Database Tests (photoEvidenceCoords, reverificationAndStrictLifecycle, imageValidationAnd5Photos, doorPhotoCoordsReview, generateMultiPageReport)
+ * - Tier 3: HTTP Server Integration Tests (api, branchLocationHierarchy, designationMaster, mastersCrud, managerTlDependency, optionalEmailUser, rolesAndPermissions, test_permissions_verification, test_perms, zeroLocationBranch, employeeCrud, userEdit)
+ * - Initializes unique temporary SQLite DB via isolated seed subprocess and Plan 1.1 fixture seeder
+ * - Redirects PDF and map generation to isolated TEST_DOWNLOADS_DIR
  * - Validates port 5099 availability before server startup
- * - Spawns test server on isolated port 5099 inheriting TEST_DB_PATH
+ * - Spawns test server on isolated port 5099 inheriting TEST_DB_PATH and TEST_DOWNLOADS_DIR
  * - Polls /api/health with stdout/stderr error capture and unconditional timer cleanup
- * - Runs integration tests (zeroLocationBranch) against isolated server and port
  * - Immediate registration of all child processes into a single trackedProcesses registry
  * - Permanent error and exit listeners prevent unhandled EventEmitter errors post-timeout
  * - Decouples spawn/runtime errors from termination: only 'exit'/'close' confirms termination
  * - Unstarted processes (no PID) tracked separately from started processes
  * - Exception-safe teardown: unexpected errors caught, logged, and set non-zero exit code
- * - Preserves temporary DB and auxiliary files if any started process remains unconfirmed
- * - Deletes temporary DB only if every started process is confirmed stopped
- * - Inner finally block recalculates unconfirmed started processes directly from registry
+ * - Preserves temporary DB, auxiliary files, and downloads if any started process remains unconfirmed
+ * - Deletes temporary files only after every started process is confirmed stopped
+ * - Reports individual PASS/FAIL/SKIPPED results for all 19 suites
  * - Explicitly sets process.exitCode = isSuccess ? 0 : 1
  */
 
@@ -28,9 +30,10 @@ const TEST_PORT = 5099;
 const SERVER_ENTRY = path.join(__dirname, '..', 'index.js');
 const SEED_SCRIPT = path.join(__dirname, '..', 'db', 'seed.js');
 
-// Unique temporary database filename for this specific test run
+// Unique temporary database and downloads directory for this specific test run
 const uniqueId = `isolated_test_${Date.now()}_${process.pid}_${Math.random().toString(36).substring(2, 8)}`;
 const tempDbPath = path.join(__dirname, '..', 'db', `${uniqueId}.db`);
+const tempDownloadsDir = path.join(__dirname, '..', 'downloads', `temp_test_downloads_${uniqueId}`);
 
 // Auxiliary files specifically bound to this unique database
 const targetAuxiliaryFiles = [
@@ -42,6 +45,7 @@ const targetAuxiliaryFiles = [
 
 // Single shared registry for every child process spawned in this test run
 const trackedProcesses = [];
+const suiteResults = [];
 
 function checkPortAvailable(port) {
   return new Promise((resolve, reject) => {
@@ -188,6 +192,7 @@ function runSubprocess(scriptPath, env, options = {}) {
   let stderr = '';
   let childProc = null;
   let entry = null;
+  const startTime = Date.now();
 
   try {
     childProc = spawn(process.execPath, [scriptPath], {
@@ -207,6 +212,7 @@ function runSubprocess(scriptPath, env, options = {}) {
         stdout: '',
         stderr: `Failed to spawn process: ${err.message}`,
         timedOut: false,
+        durationMs: Date.now() - startTime,
       }),
     };
   }
@@ -234,6 +240,7 @@ function runSubprocess(scriptPath, env, options = {}) {
           stdout,
           stderr,
           timedOut: false,
+          durationMs: Date.now() - startTime,
         });
       }
     };
@@ -258,6 +265,7 @@ function runSubprocess(scriptPath, env, options = {}) {
           stdout,
           stderr: err.message,
           timedOut: false,
+          durationMs: Date.now() - startTime,
         });
       }
     };
@@ -291,6 +299,7 @@ function runSubprocess(scriptPath, env, options = {}) {
           stdout,
           stderr: `Process timed out after ${timeoutMs}ms.${termError ? ` Termination failed: ${termError}` : ''}`,
           timedOut: true,
+          durationMs: Date.now() - startTime,
         });
       }
     }, timeoutMs);
@@ -377,67 +386,299 @@ function waitForServer(serverProc, port, timeoutMs = 15000) {
   });
 }
 
+/**
+ * Baseline Fixtures for Plan 1.1 Tests
+ * Seeds managers, team leaders, employee 202140, case AV-2026-000003, and photo evidence
+ * into the temporary database. Explicitly closes db connection to avoid file locks.
+ */
+async function seedPlan11Fixtures(dbFilePath) {
+  const sqlite3 = require('sqlite3').verbose();
+  const bcrypt = require('bcryptjs');
+  const db = new sqlite3.Database(dbFilePath);
+
+  const run = (sql, params = []) => new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) reject(err);
+      else resolve(this);
+    });
+  });
+
+  const get = (sql, params = []) => new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) reject(err);
+      else resolve(row);
+    });
+  });
+
+  try {
+    const pwHash = await bcrypt.hash('password123', 10);
+
+    // 1. Managers for managerTlDependency.test.js
+    await run(`
+      INSERT INTO users (username, full_name, role, email, password_hash, branch, department, is_active)
+      VALUES 
+        ('11134', 'ARUN CINCO', 'MANAGER', 'arun.cinco@collman.com', ?, 'Chennai Headquarters', 'Operations', 1),
+        ('10011', 'SARANGAN SAMPATH', 'MANAGER', 'sarangan.sampath@collman.com', ?, 'Chennai Headquarters', 'Operations', 1),
+        ('10571', 'BALAJI SHANKAR', 'MANAGER', 'balaji.shankar@collman.com', ?, 'Chennai Headquarters', 'Operations', 1)
+    `, [pwHash, pwHash, pwHash]);
+
+    // 2. Team Leader 202140 (Surya)
+    await run(`
+      INSERT INTO users (username, full_name, role, email, password_hash, manager, branch, department, is_active)
+      VALUES ('202140', 'Surya', 'Team Leader', 'surya.tl@collman.com', ?, 'SARANGAN SAMPATH', 'Chennai Headquarters', 'Operations', 1)
+    `, [pwHash]);
+
+    // 3. 5 Team Leaders for ARUN CINCO
+    await run(`
+      INSERT INTO users (username, full_name, role, email, password_hash, manager, branch, department, is_active)
+      VALUES
+        ('tl_manikandan', 'MANIKANDAN K', 'Team Leader', 'manikandan@collman.com', ?, 'ARUN CINCO', 'Chennai Headquarters', 'Operations', 1),
+        ('tl_madhu', 'T J MADHU', 'Team Leader', 'madhu@collman.com', ?, 'ARUN CINCO', 'Chennai Headquarters', 'Operations', 1),
+        ('tl_gurudevi', 'ULLAGANTI GURU DEVI', 'Team Leader', 'gurudevi@collman.com', ?, 'ARUN CINCO', 'Chennai Headquarters', 'Operations', 1),
+        ('tl_aravindan', 'ARAVINDAN R', 'Team Leader', 'aravindan@collman.com', ?, 'ARUN CINCO', 'Chennai Headquarters', 'Operations', 1),
+        ('tl_karthick', 'M. KARTHICK', 'Team Leader', 'karthick@collman.com', ?, 'ARUN CINCO', 'Chennai Headquarters', 'Operations', 1)
+    `, [pwHash, pwHash, pwHash, pwHash, pwHash]);
+
+    // 4. 2 Additional Team Leaders for SARANGAN SAMPATH (total 3 including 202140)
+    await run(`
+      INSERT INTO users (username, full_name, role, email, password_hash, manager, branch, department, is_active)
+      VALUES
+        ('tl_arulmani', 'ARULMANI T', 'Team Leader', 'arulmani@collman.com', ?, 'SARANGAN SAMPATH', 'Chennai Headquarters', 'Operations', 1),
+        ('tl_three', 'TL Three', 'Team Leader', 'tl3@collman.com', ?, 'SARANGAN SAMPATH', 'Chennai Headquarters', 'Operations', 1)
+    `, [pwHash, pwHash]);
+
+    // 5. 10 Team Leaders for BALAJI SHANKAR
+    for (let i = 1; i <= 10; i++) {
+      await run(`
+        INSERT INTO users (username, full_name, role, email, password_hash, manager, branch, department, is_active)
+        VALUES (?, ?, 'Team Leader', ?, ?, 'BALAJI SHANKAR', 'Chennai Headquarters', 'Operations', 1)
+      `, [`tl_balaji_${i}`, `TL Balaji ${i}`, `balaji_tl${i}@collman.com`, pwHash]);
+    }
+
+    // Resolve reviewer1 ID dynamically
+    const revUser = await get("SELECT id FROM users WHERE username = 'reviewer1'");
+    const reviewerId = revUser?.id || 3;
+
+    // 6. Employee 202140
+    await run(`
+      INSERT INTO employees (
+        employee_id, employee_name, mobile_number, alt_mobile_number, email_id, date_of_joining,
+        department, designation, branch, location, reporting_manager, team_leader,
+        hr_current_address, hr_address_line1, hr_address_line2, hr_area, hr_landmark,
+        hr_city, hr_district, hr_state, hr_pincode, hr_permanent_address, hr_permanent_pincode,
+        hr_latitude, hr_longitude, verification_status, assigned_reviewer_id, created_by
+      ) VALUES (
+        '202140', 'Surya', '9840123456', '9840123457', 'surya.k@collman.com', '2024-01-15',
+        'Operations', 'Team Leader', 'Chennai Headquarters', 'Chennai Central', 'SARANGAN SAMPATH', 'Surya',
+        'No 12, Gandhi Street, T Nagar, Chennai - 600017', 'No 12, Gandhi Street', 'T Nagar', 'T Nagar', 'Near Bus Stand',
+        'Chennai', 'Chennai', 'Tamil Nadu', '600017', 'Same as current', '600017',
+        13.079000, 80.199016, 'Pending BGV Review', ?, 'HR'
+      )
+    `, [reviewerId]);
+
+    // 7. Verification Case AV-2026-000003
+    await run(`
+      INSERT INTO verification_cases (
+        case_reference, employee_id, current_attempt_number, status, assigned_reviewer_id,
+        final_decision, final_remarks, reviewed_by, reviewed_at, tl_id, tl_name, created_at
+      ) VALUES (
+        'AV-2026-000003', '202140', 5, 'Pending BGV Review', ?,
+        NULL, NULL, NULL, NULL, '202140', 'Surya', datetime('now', '-2 days')
+      )
+    `, [reviewerId]);
+
+    // 8. Verification Progress for 202140
+    await run(`
+      INSERT INTO verification_progress (
+        employee_id, attempt_number, current_step, details_confirmed, address_confirmed,
+        address_is_same, submitted_address, residence_type, staying_since_month, staying_since_year,
+        location_captured, latitude, longitude, gps_accuracy, distance_from_hr_meters, distance_category,
+        selfie_captured, selfie_path, selfie_latitude, selfie_longitude, selfie_accuracy, selfie_captured_at,
+        house_photo_captured, house_photo_path, house_photo_latitude, house_photo_longitude, house_photo_accuracy, house_photo_captured_at,
+        street_photo_captured, street_photo_path, street_photo_latitude, street_photo_longitude, street_photo_accuracy, street_photo_captured_at,
+        landmark_photo_captured, landmark_photo_path, landmark_photo_latitude, landmark_photo_longitude, landmark_photo_accuracy, landmark_photo_captured_at,
+        door_photo_captured, door_photo_path, door_photo_latitude, door_photo_longitude, door_photo_accuracy, door_photo_captured_at,
+        address_proof_uploaded, document_type, document_path, document_original_name,
+        declaration_accepted, declaration_timestamp, last_saved_at
+      ) VALUES (
+        '202140', 5, 10, 1, 1,
+        1, 'No 12, Gandhi Street, T Nagar, Chennai - 600017', 'Own House', 'January', '2020',
+        1, 13.078997, 80.199004, 10.0, 15.0, 'Very Close',
+        1, 'uploads/selfie_202140_1790151736256_8812.jpg', 13.078997, 80.199004, 10.0, '2026-09-23 08:00:00',
+        1, 'uploads/house_202140_1790151673730_221522.jpg', 13.079000, 80.199016, 10.0, '2026-09-23 08:01:00',
+        1, 'uploads/street_202140_1790151665397_21707.jpg', 13.079020, 80.199030, 10.0, '2026-09-23 08:02:00',
+        1, 'uploads/landmark_202140_1790151653458_129718.jpg', 13.079050, 80.199060, 10.0, '2026-09-23 08:03:00',
+        1, 'uploads/door_202140_1790151719597_471153.jpg', 13.079002, 80.199010, 10.0, '2026-09-23 08:04:00',
+        1, 'Aadhaar Card', 'uploads/Aadhaar_Card_Front-1789137700441-744290144.pdf', 'Aadhaar_Card.pdf',
+        1, '2026-09-23 08:05:00', datetime('now')
+      )
+    `);
+
+    // 9. Verification Evidence for 202140 (All 6 photos/proofs)
+    await run(`
+      INSERT INTO verification_evidence (
+        case_id, attempt_number, employee_id, evidence_type, file_path,
+        latitude, longitude, gps_accuracy, captured_at, validation_status, tl_id, tl_name
+      ) VALUES
+        (NULL, 5, '202140', 'landmark_photo', 'uploads/landmark_202140_1790151653458_129718.jpg', 13.079050, 80.199060, 10.0, '2026-09-23 08:03:00', 'PASSED', '202140', 'Surya'),
+        (NULL, 5, '202140', 'street_photo', 'uploads/street_202140_1790151665397_21707.jpg', 13.079020, 80.199030, 10.0, '2026-09-23 08:02:00', 'PASSED', '202140', 'Surya'),
+        (NULL, 5, '202140', 'house_photo', 'uploads/house_202140_1790151673730_221522.jpg', 13.079000, 80.199016, 10.0, '2026-09-23 08:01:00', 'PASSED', '202140', 'Surya'),
+        (NULL, 5, '202140', 'door_photo', 'uploads/door_202140_1790151719597_471153.jpg', 13.079002, 80.199010, 10.0, '2026-09-23 08:04:00', 'PASSED', '202140', 'Surya'),
+        (NULL, 5, '202140', 'selfie', 'uploads/selfie_202140_1790151736256_8812.jpg', 13.078997, 80.199004, 10.0, '2026-09-23 08:00:00', 'PASSED', '202140', 'Surya'),
+        (NULL, 5, '202140', 'address_proof', 'uploads/Aadhaar_Card_Front-1789137700441-744290144.pdf', NULL, NULL, NULL, '2026-09-23 08:05:00', 'PASSED', '202140', 'Surya')
+    `);
+
+    // 10. Bangalore Branch & Locations for branchLocationHierarchy.test.js
+    await run(`
+      INSERT OR IGNORE INTO branches (branch_code, branch_name, city, state, is_active)
+      VALUES ('BGL', 'BANGALORE', 'Bangalore', 'Karnataka', 1)
+    `);
+    const blrBranch = await get("SELECT id FROM branches WHERE branch_code = 'BGL' OR branch_name = 'BANGALORE'");
+    if (blrBranch) {
+      await run(`
+        INSERT OR IGNORE INTO locations (location_name, city, state, branch_id, is_active)
+        VALUES 
+          ('Electronic City', 'Bangalore', 'Karnataka', ?, 1),
+          ('Bangalore Central', 'Bangalore', 'Karnataka', ?, 1)
+      `, [blrBranch.id, blrBranch.id]);
+    }
+  } finally {
+    await new Promise((resolve) => db.close(resolve));
+  }
+}
+
 async function main() {
   console.log('================================================================');
-  console.log(' STARTING ISOLATED TEST HARNESS (PHASE D)                       ');
-  console.log(` Isolated Port:        ${TEST_PORT}`);
-  console.log(` Unique Test DB:       ${tempDbPath}`);
+  console.log(' STARTING ISOLATED TEST HARNESS (GSD PHASE 1 - PLAN 1.1)        ');
+  console.log(` Isolated Port:          ${TEST_PORT}`);
+  console.log(` Unique Test DB:         ${tempDbPath}`);
+  console.log(` Unique Test Downloads:  ${tempDownloadsDir}`);
+  console.log(' Total Suites Scheduled: 19 test suites in 3 deterministic tiers');
   console.log('================================================================\n');
 
   let overallSuccess = true;
   let serverProcess = null;
   const teardownErrors = [];
 
+  // Ensure isolated temporary downloads directory exists
+  if (!fs.existsSync(tempDownloadsDir)) {
+    fs.mkdirSync(tempDownloadsDir, { recursive: true });
+  }
+
   const commonEnv = {
     ...process.env,
     PORT: String(TEST_PORT),
     TEST_PORT: String(TEST_PORT),
     TEST_DB_PATH: tempDbPath,
+    TEST_DOWNLOADS_DIR: tempDownloadsDir,
   };
 
   try {
-    // -------------------------------------------------------------
-    // STEP 1: Run pure unit test independently (no server needed)
-    // -------------------------------------------------------------
-    const unitSuitePath = path.join(__dirname, 'strictPhotoValidationRules.test.js');
-    console.log('----------------------------------------------------------------');
-    console.log(` Running Unit Test Suite: ${path.basename(unitSuitePath)}`);
-    console.log(' (Executed independently with bounded 15s timeout, no server needed)');
-    console.log('----------------------------------------------------------------');
+    // =============================================================
+    // TIER 1: Pure Unit Tests (Independent of DB & Server)
+    // =============================================================
+    console.log('================================================================');
+    console.log(' TIER 1: PURE UNIT TESTS (2 SUITES)');
+    console.log(' (Executed independently without database or server)');
+    console.log('================================================================');
 
-    const unitRun = runSubprocess(unitSuitePath, commonEnv, { timeoutMs: 15000, captureOutput: false, name: 'UnitTests' });
-    const unitResult = await unitRun.promise;
+    const tier1Suites = [
+      { file: 'strictPhotoValidationRules.test.js', timeoutMs: 15000 },
+      { file: 'googleGeocoding.test.js', timeoutMs: 15000 }
+    ];
 
-    if (!unitResult.success) {
-      console.error(`❌ Unit test suite failed: ${path.basename(unitSuitePath)}`);
-      overallSuccess = false;
-      return; // Skip server startup on unit test failure
+    for (const suite of tier1Suites) {
+      const suitePath = path.join(__dirname, suite.file);
+      console.log(`\n[RUNNING TIER 1] ${suite.file} ...`);
+      const run = runSubprocess(suitePath, commonEnv, { timeoutMs: suite.timeoutMs, captureOutput: false, name: suite.file });
+      const result = await run.promise;
+
+      suiteResults.push({
+        name: suite.file,
+        tier: 'Tier 1 (Unit)',
+        success: result.success,
+        code: result.code,
+        durationMs: result.durationMs,
+        error: result.success ? null : (result.stderr || result.stdout || `Exit code ${result.code}`)
+      });
+
+      if (!result.success) {
+        console.error(`❌ Suite failed: ${suite.file}`);
+        overallSuccess = false;
+        return; // Fast fail before DB initialization
+      }
+      console.log(`✓ Suite passed: ${suite.file} (${result.durationMs}ms)`);
     }
-    console.log(`✓ Unit test suite passed: ${path.basename(unitSuitePath)}\n`);
 
-    // -------------------------------------------------------------
-    // STEP 2: Initialize & Seed isolated temporary database
-    // -------------------------------------------------------------
-    console.log('----------------------------------------------------------------');
-    console.log(' Initializing & Seeding Isolated Temporary Database');
-    console.log(` Target Database: ${tempDbPath}`);
-    console.log('----------------------------------------------------------------');
+    // =============================================================
+    // INITIALIZE & SEED ISOLATED DATABASE + BASELINE FIXTURES
+    // =============================================================
+    console.log('\n================================================================');
+    console.log(' INITIALIZING & SEEDING TEMPORARY DATABASE');
+    console.log(` Target DB: ${tempDbPath}`);
+    console.log('================================================================');
+
     const seedRun = runSubprocess(SEED_SCRIPT, commonEnv, { timeoutMs: 30000, captureOutput: true, name: 'DatabaseSeed' });
     const seedResult = await seedRun.promise;
 
     if (!seedResult.success) {
       throw new Error(`Isolated DB seeding failed:\n${seedResult.stderr || seedResult.stdout}`);
     }
-    console.log('✓ Isolated database seeded successfully (admin user and initial records created).\n');
+    console.log('✓ Base schema & seed data initialized successfully.');
 
-    // -------------------------------------------------------------
-    // STEP 3: Validate port availability & spawn isolated test server
-    // -------------------------------------------------------------
-    console.log('----------------------------------------------------------------');
-    console.log(` Validating Port ${TEST_PORT} Availability & Spawning Server`);
-    console.log('----------------------------------------------------------------');
+    console.log('Seeding Plan 1.1 baseline fixtures (Managers, Team Leaders, 202140, AV-2026-000003, Evidence)...');
+    await seedPlan11Fixtures(tempDbPath);
+    console.log('✓ Plan 1.1 fixtures seeded and database connection cleanly closed.');
+
+    // =============================================================
+    // TIER 2: Direct Database Tests (Run against seeded temporary DB)
+    // =============================================================
+    console.log('\n================================================================');
+    console.log(' TIER 2: DIRECT DATABASE TESTS (5 SUITES)');
+    console.log(' (Executed against seeded temporary DB before server spawn)');
+    console.log('================================================================');
+
+    const tier2Suites = [
+      { file: 'photoEvidenceCoords.test.js', timeoutMs: 25000 },
+      { file: 'reverificationAndStrictLifecycle.test.js', timeoutMs: 25000 },
+      { file: 'imageValidationAnd5Photos.test.js', timeoutMs: 25000 },
+      { file: 'doorPhotoCoordsReview.test.js', timeoutMs: 20000 },
+      { file: 'generateMultiPageReport.test.js', timeoutMs: 30000 }
+    ];
+
+    for (const suite of tier2Suites) {
+      const suitePath = path.join(__dirname, suite.file);
+      console.log(`\n[RUNNING TIER 2] ${suite.file} ...`);
+      const run = runSubprocess(suitePath, commonEnv, { timeoutMs: suite.timeoutMs, captureOutput: false, name: suite.file });
+      const result = await run.promise;
+
+      suiteResults.push({
+        name: suite.file,
+        tier: 'Tier 2 (Direct DB)',
+        success: result.success,
+        code: result.code,
+        durationMs: result.durationMs,
+        error: result.success ? null : (result.stderr || result.stdout || `Exit code ${result.code}`)
+      });
+
+      if (!result.success) {
+        console.error(`❌ Suite failed: ${suite.file}`);
+        overallSuccess = false;
+        return; // Fast fail before server launch
+      }
+      console.log(`✓ Suite passed: ${suite.file} (${result.durationMs}ms)`);
+    }
+
+    // =============================================================
+    // TIER 3: HTTP Server Integration Tests (Port 5099)
+    // =============================================================
+    console.log('\n================================================================');
+    console.log(' TIER 3: HTTP SERVER INTEGRATION TESTS (12 SUITES)');
+    console.log(` Validating Port ${TEST_PORT} Availability & Launching Isolated Server`);
+    console.log('================================================================');
+
     await checkPortAvailable(TEST_PORT);
-    console.log(`✓ Confirmed port ${TEST_PORT} is free and unassigned.`);
+    console.log(`✓ Port ${TEST_PORT} is free and unassigned.`);
 
     serverProcess = spawn(process.execPath, [SERVER_ENTRY], {
       env: commonEnv,
@@ -445,38 +686,62 @@ async function main() {
     });
     registerProcess(serverProcess, 'TestServer');
 
-    console.log(`[HARNESS] Server process spawned (PID: ${serverProcess.pid}). Waiting for health check...`);
+    console.log(`[HARNESS] Test server spawned (PID: ${serverProcess.pid}). Waiting for health check...`);
     await waitForServer(serverProcess, TEST_PORT, 15000);
-    console.log(`[HARNESS] Test server online on port ${TEST_PORT} using isolated DB.\n`);
+    console.log(`[HARNESS] Test server online on port ${TEST_PORT} bound to isolated DB.\n`);
 
-    // -------------------------------------------------------------
-    // STEP 4: Run integration test suite
-    // -------------------------------------------------------------
-    const integrationSuitePath = path.join(__dirname, 'zeroLocationBranch.test.js');
-    console.log('----------------------------------------------------------------');
-    console.log(` Running Integration Test Suite: ${path.basename(integrationSuitePath)}`);
-    console.log(' (Executed with bounded 30s timeout against isolated server)');
-    console.log('----------------------------------------------------------------');
+    const tier3Suites = [
+      { file: 'api.test.js', timeoutMs: 30000 },
+      { file: 'branchLocationHierarchy.test.js', timeoutMs: 25000 },
+      { file: 'designationMaster.test.js', timeoutMs: 25000 },
+      { file: 'mastersCrud.test.js', timeoutMs: 25000 },
+      { file: 'managerTlDependency.test.js', timeoutMs: 25000 },
+      { file: 'optionalEmailUser.test.js', timeoutMs: 25000 },
+      { file: 'rolesAndPermissions.test.js', timeoutMs: 25000 },
+      { file: 'test_permissions_verification.cjs', timeoutMs: 30000 },
+      { file: 'test_perms.cjs', timeoutMs: 25000 },
+      { file: 'zeroLocationBranch.test.js', timeoutMs: 25000 },
+      { file: 'employeeCrud.test.js', timeoutMs: 25000 },
+      { file: 'userEdit.test.js', timeoutMs: 25000 }
+    ];
 
-    const intRun = runSubprocess(integrationSuitePath, commonEnv, { timeoutMs: 30000, captureOutput: false, name: 'IntegrationTests' });
-    const intResult = await intRun.promise;
+    for (const suite of tier3Suites) {
+      const suitePath = path.join(__dirname, suite.file);
+      console.log(`\n[RUNNING TIER 3] ${suite.file} ...`);
+      const run = runSubprocess(suitePath, commonEnv, { timeoutMs: suite.timeoutMs, captureOutput: false, name: suite.file });
+      const result = await run.promise;
 
-    if (!intResult.success) {
-      console.error(`❌ Integration test suite failed: ${path.basename(integrationSuitePath)}`);
-      overallSuccess = false;
-    } else {
-      console.log(`✓ Integration test suite passed: ${path.basename(integrationSuitePath)}\n`);
+      suiteResults.push({
+        name: suite.file,
+        tier: 'Tier 3 (HTTP)',
+        success: result.success,
+        code: result.code,
+        durationMs: result.durationMs,
+        error: result.success ? null : (result.stderr || result.stdout || `Exit code ${result.code}`)
+      });
+
+      if (!result.success) {
+        console.error(`❌ Suite failed: ${suite.file}`);
+        overallSuccess = false;
+        // Continue or stop? In integration suites, we record the failure and continue to get full results unless server died
+        if (serverProcess && (serverProcess.exitCode !== null || serverProcess.signalCode !== null)) {
+          console.error('❌ Test server terminated prematurely. Aborting remaining Tier 3 suites.');
+          break;
+        }
+      } else {
+        console.log(`✓ Suite passed: ${suite.file} (${result.durationMs}ms)`);
+      }
     }
 
   } catch (err) {
     overallSuccess = false;
     console.error(`\n[HARNESS ERROR] Execution failure:\n${err.message}\n`);
   } finally {
-    // -------------------------------------------------------------
-    // TEARDOWN PHASE: Terminate all processes & cleanup database
-    // -------------------------------------------------------------
-    console.log('================================================================');
-    console.log(' TEARDOWN: TERMINATING SUBPROCESSES & CLEANING TEMPORARY DB     ');
+    // =============================================================
+    // TEARDOWN PHASE: Terminate all processes & cleanup temporary DB
+    // =============================================================
+    console.log('\n================================================================');
+    console.log(' TEARDOWN: TERMINATING SUBPROCESSES & CLEANING TEMPORARY ASSETS ');
     console.log('================================================================');
 
     try {
@@ -520,6 +785,8 @@ async function main() {
         // 3. Delete temporary database files ONLY when every started process is confirmed stopped
         console.log(`[TEARDOWN] All started child process(es) confirmed stopped. Proceeding with file cleanup.`);
         let deletionFailed = false;
+
+        // Clean temporary database auxiliary files
         for (const file of targetAuxiliaryFiles) {
           try {
             if (fs.existsSync(file)) {
@@ -533,8 +800,20 @@ async function main() {
           }
         }
 
+        // Clean temporary downloads directory
+        try {
+          if (fs.existsSync(tempDownloadsDir)) {
+            fs.rmSync(tempDownloadsDir, { recursive: true, force: true });
+            console.log(`[TEARDOWN] Deleted temporary downloads directory: ${path.basename(tempDownloadsDir)}`);
+          }
+        } catch (rmDirErr) {
+          deletionFailed = true;
+          teardownErrors.push(`Failed to delete temporary downloads dir [${tempDownloadsDir}]: ${rmDirErr.message}`);
+          console.error(`❌ [TEARDOWN ERROR] Failed to delete downloads directory: ${rmDirErr.message}`);
+        }
+
         if (deletionFailed) {
-          console.error(`❌ [TEARDOWN ERROR] One or more temporary database files could not be deleted.`);
+          console.error(`❌ [TEARDOWN ERROR] One or more temporary files could not be deleted.`);
         }
       }
     } catch (unexpectedTeardownErr) {
@@ -542,16 +821,36 @@ async function main() {
       teardownErrors.push(`Unexpected teardown exception: ${unexpectedTeardownErr.message}`);
     } finally {
       // 4. Execution Summary (Guaranteed to execute regardless of unexpected errors)
-      // Recalculate directly from trackedProcesses to guarantee fresh ground truth
       const finalUnconfirmedStarted = trackedProcesses.filter((e) => e.started && !e.confirmedStopped);
       const hasTeardownErrors = teardownErrors.length > 0;
       const allProcessesConfirmed = finalUnconfirmedStarted.length === 0;
-      const isSuccess = overallSuccess && allProcessesConfirmed && !hasTeardownErrors;
+      const allSuitesRan = suiteResults.length === 19;
+      const allSuitesPassed = allSuitesRan && suiteResults.every((s) => s.success);
+      const isSuccess = overallSuccess && allSuitesPassed && allProcessesConfirmed && !hasTeardownErrors;
 
       console.log('\n================================================================');
-      console.log(' EXECUTION SUMMARY                                              ');
+      console.log(' PLAN 1.1 ALL-SUITE EXECUTION SUMMARY (19 SUITES)               ');
       console.log('================================================================');
-      console.log(`Test Suites Status:    ${overallSuccess ? 'ALL PASSED ✓' : 'FAILED ❌'}`);
+      console.log(' #  | Suite Name                                | Tier          | Status  | Time (ms)');
+      console.log('----------------------------------------------------------------');
+
+      suiteResults.forEach((s, idx) => {
+        const num = String(idx + 1).padStart(2, ' ');
+        const name = s.name.padEnd(41, ' ');
+        const tier = s.tier.padEnd(13, ' ');
+        const status = s.success ? 'PASSED ✓' : 'FAILED ❌';
+        const time = String(s.durationMs || 0).padStart(6, ' ');
+        console.log(` ${num} | ${name} | ${tier} | ${status} | ${time}`);
+      });
+
+      if (suiteResults.length < 19) {
+        console.log(`\n⚠️  Only ${suiteResults.length} of 19 test suites executed due to early termination.`);
+      }
+
+      console.log('----------------------------------------------------------------');
+      console.log(`Total Suites Ran:      ${suiteResults.length} / 19`);
+      console.log(`Suites Passed:         ${suiteResults.filter((s) => s.success).length}`);
+      console.log(`Suites Failed:         ${suiteResults.filter((s) => !s.success).length}`);
       console.log(`Subprocesses Stopped:  ${allProcessesConfirmed ? 'ALL CONFIRMED ✓' : 'UNCONFIRMED / FAILED ❌'}`);
       console.log(`Cleanup Status:        ${hasTeardownErrors ? `${teardownErrors.length} ERROR(S) ❌` : 'CLEAN ✓'}`);
       console.log(`Overall Result:        ${isSuccess ? 'SUCCESS (Exit Code 0) ✓' : 'FAILURE (Exit Code 1) ❌'}`);

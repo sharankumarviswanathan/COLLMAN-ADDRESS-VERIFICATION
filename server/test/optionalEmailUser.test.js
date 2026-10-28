@@ -10,7 +10,7 @@ function makeRequest(method, path, body = null, headers = {}) {
 
     const options = {
       hostname: 'localhost',
-      port: 5000,
+      port: process.env.TEST_PORT || 5000,
       path,
       method,
       headers: defaultHeaders

@@ -2,7 +2,7 @@ const http = require('http');
 
 function request(method, path, body = null, token = null) {
   return new Promise((resolve, reject) => {
-    const url = new URL(`http://127.0.0.1:5000${path}`);
+    const url = new URL(`http://127.0.0.1:${process.env.TEST_PORT || 5000}${path}`);
     const options = {
       hostname: url.hostname,
       port: url.port,

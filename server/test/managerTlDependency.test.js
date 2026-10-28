@@ -12,7 +12,7 @@ function makeRequest(method, path, body = null, headers = {}) {
 
     const req = http.request({
       hostname: 'localhost',
-      port: 5000,
+      port: process.env.TEST_PORT || 5000,
       path: `/api${path}`,
       method,
       headers: reqHeaders

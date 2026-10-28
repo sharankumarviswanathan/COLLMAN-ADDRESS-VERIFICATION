@@ -3,12 +3,16 @@ const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const { generateAdminToken } = require('../middleware/auth');
 
-const dbPath = path.join(__dirname, '../db/collman_bgv.db');
+const dbPath = process.env.TEST_DB_PATH || path.join(__dirname, '../db/collman_bgv.db');
 const db = new sqlite3.Database(dbPath);
 
 function doRequest(options, postData = null) {
+  const requestOptions = {
+    ...options,
+    port: process.env.TEST_PORT || options.port || 5000
+  };
   return new Promise((resolve, reject) => {
-    const req = http.request(options, (res) => {
+    const req = http.request(requestOptions, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => resolve({ status: res.statusCode, body: data }));

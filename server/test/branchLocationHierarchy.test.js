@@ -2,7 +2,7 @@ const assert = require('assert');
 const http = require('http');
 
 const BASE_HOST = 'localhost';
-const BASE_PORT = 5000;
+const BASE_PORT = process.env.TEST_PORT || 5000;
 
 function makeRequest(method, path, body = null, token = null) {
   return new Promise((resolve, reject) => {
