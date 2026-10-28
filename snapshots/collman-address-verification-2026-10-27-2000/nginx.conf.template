@@ -1,0 +1,56 @@
+# ==============================================================
+# Nginx Configuration Template for Collman Address Verification
+# ==============================================================
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {{DOMAIN_OR_IP}};
+
+    # Max upload limit for candidate documents, utility bills, and bulk Excel uploads
+    client_max_body_size 50M;
+
+    # Gzip Compression for fast delivery
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/rss+xml application/atom+xml image/svg+xml;
+
+    # Serve built frontend static assets with cache headers
+    location /assets/ {
+        alias {{APP_DIR}}/client/dist/assets/;
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        access_log off;
+    }
+
+    # Candidate uploaded documents & photos
+    location /uploads/ {
+        alias {{APP_DIR}}/server/uploads/;
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800";
+    }
+
+    # Generated PDF verification reports & audit files
+    location /downloads/ {
+        alias {{APP_DIR}}/server/downloads/;
+        expires 1d;
+        add_header Cache-Control "no-cache";
+    }
+
+    # Reverse proxy to Node.js backend (Express + SPA Fallback)
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 120s;
+        proxy_connect_timeout 60s;
+    }
+}
