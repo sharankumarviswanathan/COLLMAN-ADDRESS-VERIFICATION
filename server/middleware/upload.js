@@ -27,13 +27,22 @@ const fileFilter = (req, file, cb) => {
     'image/jpg',
     'image/png',
     'image/webp',
-    'application/pdf'
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel',
+    'text/csv',
+    'application/csv',
+    'text/plain',
+    'application/octet-stream'
   ];
 
-  if (allowedMimeTypes.includes(file.mimetype)) {
+  const ext = path.extname(file.originalname).toLowerCase();
+  const allowedExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.pdf', '.xlsx', '.xls', '.csv'];
+
+  if (allowedMimeTypes.includes(file.mimetype) || allowedExtensions.includes(ext)) {
     cb(null, true);
   } else {
-    cb(new Error('Invalid file format. Please upload PDF, JPG, JPEG, or PNG files only.'), false);
+    cb(new Error('Invalid file format. Please upload PDF, JPG, JPEG, PNG, Excel (.xlsx, .xls) or CSV files only.'), false);
   }
 };
 

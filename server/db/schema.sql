@@ -6,15 +6,40 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT UNIQUE NOT NULL,
-  email TEXT UNIQUE NOT NULL,
+  email TEXT,
   password_hash TEXT NOT NULL,
   full_name TEXT NOT NULL,
-  role TEXT NOT NULL CHECK(role IN ('Super Admin', 'HR/Admin', 'BGV Reviewer', 'View Only')),
+  role TEXT NOT NULL,
   branch TEXT,
   department TEXT,
+  manager TEXT,
   is_active INTEGER DEFAULT 1,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email) WHERE email IS NOT NULL AND email != '';
+
+-- Master: Roles
+CREATE TABLE IF NOT EXISTS roles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_name TEXT UNIQUE NOT NULL,
+  role_code TEXT UNIQUE NOT NULL,
+  description TEXT,
+  badge_color TEXT DEFAULT 'purple',
+  is_system INTEGER DEFAULT 0,
+  is_active INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Master: Role Permissions
+CREATE TABLE IF NOT EXISTS role_permissions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_name TEXT NOT NULL,
+  permission_key TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(role_name, permission_key)
 );
 
 -- Master: Branches
@@ -35,13 +60,28 @@ CREATE TABLE IF NOT EXISTS departments (
   is_active INTEGER DEFAULT 1
 );
 
+-- Master: Designations
+CREATE TABLE IF NOT EXISTS designations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  designation_code TEXT UNIQUE NOT NULL,
+  designation_name TEXT NOT NULL,
+  description TEXT,
+  is_active INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Master: Locations
 CREATE TABLE IF NOT EXISTS locations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  branch_id INTEGER,
   location_name TEXT NOT NULL,
   city TEXT NOT NULL,
   state TEXT NOT NULL,
-  is_active INTEGER DEFAULT 1
+  is_active INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
 );
 
 -- Master: Document Types
@@ -77,13 +117,14 @@ CREATE TABLE IF NOT EXISTS employees (
   employee_name TEXT NOT NULL,
   mobile_number TEXT NOT NULL,
   alt_mobile_number TEXT,
-  email_id TEXT NOT NULL,
+  email_id TEXT,
   date_of_joining TEXT NOT NULL,
   department TEXT NOT NULL,
   designation TEXT NOT NULL,
   branch TEXT NOT NULL,
   location TEXT NOT NULL,
   reporting_manager TEXT,
+  team_leader TEXT,
   hr_current_address TEXT NOT NULL,
   hr_address_line1 TEXT,
   hr_address_line2 TEXT,
@@ -155,6 +196,8 @@ CREATE TABLE IF NOT EXISTS verification_cases (
   final_remarks TEXT,
   reviewed_by TEXT,
   reviewed_at TEXT,
+  tl_id TEXT,
+  tl_name TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -172,7 +215,9 @@ CREATE TABLE IF NOT EXISTS verification_attempts (
   reviewer_id INTEGER REFERENCES users(id),
   reviewer_remarks TEXT,
   failure_reason TEXT,
-  reviewed_at TEXT
+  reviewed_at TEXT,
+  tl_id TEXT,
+  tl_name TEXT
 );
 
 -- Step-by-step Verification Progress (Auto-save support for common link)
@@ -232,6 +277,16 @@ CREATE TABLE IF NOT EXISTS verification_progress (
   door_photo_longitude REAL,
   door_photo_accuracy REAL,
   door_photo_captured_at TEXT,
+  joint_selfie_captured INTEGER DEFAULT 0,
+  joint_selfie_path TEXT,
+  joint_selfie_latitude REAL,
+  joint_selfie_longitude REAL,
+  joint_selfie_accuracy REAL,
+  joint_selfie_captured_at TEXT,
+  joint_selfie_tl_id TEXT,
+  joint_selfie_tl_name TEXT,
+  tl_id TEXT,
+  tl_name TEXT,
   address_proof_uploaded INTEGER DEFAULT 0,
   document_type TEXT,
   document_path TEXT,
@@ -249,7 +304,7 @@ CREATE TABLE IF NOT EXISTS verification_evidence (
   case_id INTEGER,
   attempt_number INTEGER NOT NULL DEFAULT 1,
   employee_id TEXT NOT NULL,
-  evidence_type TEXT NOT NULL CHECK(evidence_type IN ('selfie', 'house_photo', 'building_photo', 'entrance_photo', 'street_photo', 'landmark_photo', 'door_photo', 'address_proof')),
+  evidence_type TEXT NOT NULL CHECK(evidence_type IN ('selfie', 'house_photo', 'building_photo', 'entrance_photo', 'street_photo', 'landmark_photo', 'door_photo', 'address_proof', 'joint_selfie')),
   document_type TEXT,
   file_path TEXT NOT NULL,
   original_filename TEXT,
@@ -258,7 +313,12 @@ CREATE TABLE IF NOT EXISTS verification_evidence (
   latitude REAL,
   longitude REAL,
   gps_accuracy REAL,
-  captured_at TEXT DEFAULT CURRENT_TIMESTAMP
+  captured_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  validation_status TEXT DEFAULT 'PASSED',
+  validation_report TEXT,
+  validated_at TEXT,
+  tl_id TEXT,
+  tl_name TEXT
 );
 
 -- Verification Timeline / Audit Trail per Case
@@ -271,6 +331,7 @@ CREATE TABLE IF NOT EXISTS verification_timeline (
   actor_type TEXT NOT NULL,
   actor_name TEXT NOT NULL,
   details TEXT,
+  tl_id TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -297,6 +358,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   actor_name TEXT NOT NULL,
   action TEXT NOT NULL,
   employee_id TEXT,
+  agent_id TEXT,
+  tl_id TEXT,
   case_reference TEXT,
   ip_address TEXT,
   user_agent TEXT,

@@ -3,13 +3,13 @@ const router = express.Router();
 const fs = require('fs');
 const XLSX = require('xlsx');
 const { query } = require('../db/database');
-const { authenticateAdmin, requireRoles } = require('../middleware/auth');
+const { authenticateAdmin, requireRoles, requirePermission, checkUserHasPermission, isTeamLeader } = require('../middleware/auth');
 const { upload } = require('../middleware/upload');
 const { generateExcelReport } = require('../utils/excelGenerator');
 const { enqueueEmployees, getQueueStats } = require('../utils/geocodingQueue');
 
 // GET /api/employees - Query Employee Master with filters, search, pagination
-router.get('/', authenticateAdmin, async (req, res) => {
+router.get('/', authenticateAdmin, requirePermission('view_employees'), async (req, res) => {
   try {
     const {
       search,
@@ -74,6 +74,12 @@ router.get('/', authenticateAdmin, async (req, res) => {
       params.push(endDate);
     }
 
+    // TL access restriction: TLs can only view employees assigned to them
+    if (isTeamLeader(req.user)) {
+      whereClauses.push('e.assigned_reviewer_id = ?');
+      params.push(req.user.id);
+    }
+
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
     // Allowed sort columns
@@ -133,8 +139,132 @@ router.get('/geocoding-queue-stats', authenticateAdmin, async (req, res) => {
   }
 });
 
+// GET /api/employees/sample-template - Download Excel/CSV sample file for employee bulk upload
+router.get('/sample-template', authenticateAdmin, async (req, res) => {
+  try {
+    const format = (req.query.format || 'xlsx').toLowerCase();
+
+    const sampleData = [
+      {
+        'Employee ID': 'COL00120',
+        'Employee Name': 'Venkatesh Raman',
+        'Mobile Number': '9876543210',
+        'Manager': 'SARANGAN',
+        'Team Leader': 'Surya',
+        'Date of Joining': '2026-10-22',
+        'Department': 'Operations',
+        'Designation': 'Executive',
+        'Branch': 'Chennai Headquarters',
+        'Location': 'Chennai Central',
+        'Full Current Address': 'No. 45, Gandhi Street, T. Nagar',
+        'City': 'Chennai',
+        'State': 'Tamil Nadu',
+        'Pincode': '600017'
+      },
+      {
+        'Employee ID': 'COL00121',
+        'Employee Name': 'Divya Krishnan',
+        'Mobile Number': '9840123456',
+        'Manager': 'Rajesh Sharma',
+        'Team Leader': 'Surya',
+        'Date of Joining': '2026-10-22',
+        'Department': 'Finance & Accounts',
+        'Designation': 'Executive',
+        'Branch': 'Chennai Headquarters',
+        'Location': 'Chennai South',
+        'Full Current Address': 'Flat 2B, Lakshmi Apartments, Velachery',
+        'City': 'Chennai',
+        'State': 'Tamil Nadu',
+        'Pincode': '600042'
+      },
+      {
+        'Employee ID': 'COL00122',
+        'Employee Name': 'Mohan Raj',
+        'Mobile Number': '9123456789',
+        'Manager': 'Anjali Sharma',
+        'Team Leader': 'Surya',
+        'Date of Joining': '2026-10-22',
+        'Department': 'Operations',
+        'Designation': 'Senior Executive',
+        'Branch': 'Chennai Headquarters',
+        'Location': 'Chennai West',
+        'Full Current Address': '12/3, Anna Nagar 2nd Avenue',
+        'City': 'Chennai',
+        'State': 'Tamil Nadu',
+        'Pincode': '600040'
+      }
+    ];
+
+    if (format === 'csv') {
+      const headers = Object.keys(sampleData[0]);
+      const csvRows = [headers.join(',')];
+      for (const row of sampleData) {
+        csvRows.push(headers.map((h) => `"${(row[h] || '').replace(/"/g, '""')}"`).join(','));
+      }
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="Collman_Employee_Bulk_Upload_Sample.csv"');
+      return res.send(csvRows.join('\n'));
+    }
+
+    // Default to Excel (.xlsx)
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(sampleData);
+
+    ws['!cols'] = [
+      { wch: 16 }, // Employee ID
+      { wch: 22 }, // Employee Name
+      { wch: 16 }, // Mobile Number
+      { wch: 18 }, // Manager
+      { wch: 18 }, // Team Leader
+      { wch: 16 }, // Date of Joining
+      { wch: 20 }, // Department
+      { wch: 18 }, // Designation
+      { wch: 24 }, // Branch
+      { wch: 18 }, // Location
+      { wch: 38 }, // Full Current Address
+      { wch: 16 }, // City
+      { wch: 16 }, // State
+      { wch: 12 }  // Pincode
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Employee Template');
+
+    // Add Reference / Help Sheet with configured branches, departments, team leaders
+    try {
+      const activeBranches = await query.all('SELECT branch_name FROM branches WHERE is_active = 1');
+      const activeDepts = await query.all('SELECT department_name FROM departments WHERE is_active = 1');
+      const teamLeaders = await query.all("SELECT full_name FROM users WHERE role = 'Team Leader' OR role = 'Super Admin'");
+
+      const refRows = [];
+      const maxRows = Math.max(activeBranches.length, activeDepts.length, teamLeaders.length, 5);
+
+      for (let i = 0; i < maxRows; i++) {
+        refRows.push({
+          'Configured Branches': activeBranches[i]?.branch_name || '',
+          'Configured Departments': activeDepts[i]?.department_name || '',
+          'Active Team Leaders': teamLeaders[i]?.full_name || ''
+        });
+      }
+
+      const refWs = XLSX.utils.json_to_sheet(refRows);
+      refWs['!cols'] = [{ wch: 26 }, { wch: 26 }, { wch: 26 }];
+      XLSX.utils.book_append_sheet(wb, refWs, 'Configured Options Reference');
+    } catch (refErr) {
+      console.warn('Could not populate employee reference sheet:', refErr.message);
+    }
+
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="Collman_Employee_Bulk_Upload_Sample.xlsx"');
+    res.send(buffer);
+  } catch (err) {
+    console.error('Employee sample template error:', err);
+    res.status(500).json({ error: 'Failed to generate employee sample template.' });
+  }
+});
+
 // GET /api/employees/:id - Retrieve single employee detail & verification history
-router.get('/:id', authenticateAdmin, async (req, res) => {
+router.get('/:id', authenticateAdmin, requirePermission('view_employees'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -150,6 +280,11 @@ router.get('/:id', authenticateAdmin, async (req, res) => {
 
     if (!employee) {
       return res.status(404).json({ error: 'Employee not found.' });
+    }
+
+    // TL access restriction: Team Leaders can only access assigned employees
+    if (isTeamLeader(req.user) && employee.assigned_reviewer_id !== req.user.id) {
+      return res.status(403).json({ error: 'Access restricted: Team Leaders can only access employee records assigned to them.' });
     }
 
     // Load verification progress
@@ -194,7 +329,7 @@ router.get('/:id', authenticateAdmin, async (req, res) => {
 });
 
 // POST /api/employees - Manual Single Employee Creation
-router.post('/', authenticateAdmin, requireRoles('Super Admin', 'HR/Admin'), async (req, res) => {
+router.post('/', authenticateAdmin, requirePermission('create_employee'), async (req, res) => {
   try {
     const {
       employeeId,
@@ -208,6 +343,8 @@ router.post('/', authenticateAdmin, requireRoles('Super Admin', 'HR/Admin'), asy
       branch,
       location,
       reportingManager,
+      manager,
+      teamLeader,
       currentAddress,
       addressLine1,
       addressLine2,
@@ -223,7 +360,7 @@ router.post('/', authenticateAdmin, requireRoles('Super Admin', 'HR/Admin'), asy
       longitude
     } = req.body;
 
-    if (!employeeId || !employeeName || !mobileNumber || !emailId || !dateOfJoining || !department || !branch || !currentAddress || !city || !state || !pincode) {
+    if (!employeeId || !employeeName || !mobileNumber || !dateOfJoining || !department || !branch || !currentAddress || !city || !state || !pincode) {
       return res.status(400).json({ error: 'Please provide all mandatory employee and address fields.' });
     }
 
@@ -242,24 +379,97 @@ router.post('/', authenticateAdmin, requireRoles('Super Admin', 'HR/Admin'), asy
       });
     }
 
+    const repMgr = reportingManager ? reportingManager.trim() : (manager ? manager.trim() : null);
+    const tl = teamLeader ? teamLeader.trim() : null;
+
+    // Strict validation: Verify Manager - Team Leader reporting relationship
+    if (repMgr && tl) {
+      const mgrUser = await query.get(
+        `SELECT id, username, full_name FROM users
+         WHERE (LOWER(role) = 'manager' OR role = 'MANAGER')
+           AND (CAST(id AS TEXT) = ? OR LOWER(username) = LOWER(?) OR LOWER(full_name) = LOWER(?))
+           AND is_active = 1`,
+        [repMgr, repMgr, repMgr]
+      );
+
+      const tlUser = await query.get(
+        `SELECT id, username, full_name, manager FROM users
+         WHERE role = 'Team Leader'
+           AND (CAST(id AS TEXT) = ? OR LOWER(username) = LOWER(?) OR LOWER(full_name) = LOWER(?))`,
+        [tl, tl, tl]
+      );
+
+      if (mgrUser && tlUser && tlUser.manager) {
+        const matches = (
+          tlUser.manager.toLowerCase().trim() === mgrUser.full_name.toLowerCase().trim() ||
+          tlUser.manager.toLowerCase().trim() === mgrUser.username.toLowerCase().trim() ||
+          tlUser.manager.toString() === mgrUser.id.toString()
+        );
+
+        if (!matches) {
+          return res.status(400).json({
+            error: `Validation error: Selected Team Leader '${tlUser.full_name}' does not report to Manager '${mgrUser.full_name}'.`
+          });
+        }
+      }
+    }
+
+    // Strict validation: Verify Branch - Location relationship
+    if (branch && location) {
+      const branchRecord = await query.get(
+        'SELECT id, branch_name FROM branches WHERE LOWER(TRIM(branch_name)) = LOWER(TRIM(?)) OR UPPER(TRIM(branch_code)) = UPPER(TRIM(?))',
+        [branch, branch]
+      );
+      if (branchRecord) {
+        const configuredLocs = await query.all(
+          'SELECT id, location_name, is_active FROM locations WHERE branch_id = ?',
+          [branchRecord.id]
+        );
+        if (configuredLocs.length > 0) {
+          const locMatch = configuredLocs.find(
+            (l) => l.location_name.toLowerCase().trim() === location.toLowerCase().trim()
+          );
+          if (!locMatch) {
+            return res.status(400).json({
+              error: `Validation error: Location '${location}' does not belong to branch '${branchRecord.branch_name}'.`
+            });
+          }
+        }
+      }
+    }
+    const safeEmail = emailId && emailId.trim() ? emailId.trim() : (cleanId.toLowerCase() + '@collman.local');
+    const safeAltMobile = altMobileNumber ? altMobileNumber.trim() : null;
+
     // Default TAT calculation (3 days for employee)
     const tatSetting = await query.get("SELECT value FROM app_settings WHERE key='employee_tat_days'");
     const employeeTatDays = parseInt(tatSetting ? tatSetting.value : '3', 10);
 
+    // If a matching Team Leader user exists, automatically associate reviewer ID
+    let assignedReviewerId = null;
+    if (tl) {
+      const tlUser = await query.get(
+        "SELECT id FROM users WHERE (full_name = ? OR username = ?) AND role = 'Team Leader'",
+        [tl, tl]
+      );
+      if (tlUser) {
+        assignedReviewerId = tlUser.id;
+      }
+    }
+
     const result = await query.run(
       `INSERT INTO employees (
         employee_id, employee_name, mobile_number, alt_mobile_number, email_id, date_of_joining,
-        department, designation, branch, location, reporting_manager,
+        department, designation, branch, location, reporting_manager, team_leader,
         hr_current_address, hr_address_line1, hr_address_line2, hr_area, hr_landmark,
         hr_city, hr_district, hr_state, hr_pincode, hr_permanent_address, hr_permanent_pincode,
-        hr_latitude, hr_longitude, verification_status, tat_deadline, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Not Started', datetime('now', '+' || ? || ' days'), ?)`,
+        hr_latitude, hr_longitude, verification_status, assigned_reviewer_id, tat_deadline, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Not Started', ?, datetime('now', '+' || ? || ' days'), ?)`,
       [
-        cleanId, employeeName.trim(), mobileNumber.trim(), altMobileNumber || null, emailId.trim(), dateOfJoining,
-        department, designation || 'Employee', branch, location || city, reportingManager || null,
+        cleanId, employeeName.trim(), mobileNumber.trim(), safeAltMobile, safeEmail, dateOfJoining,
+        department, designation || 'Employee', branch, location || city, repMgr, tl,
         currentAddress.trim(), addressLine1 || null, addressLine2 || null, area || null, landmark || null,
         city.trim(), district || null, state.trim(), pincode.trim(), permanentAddress || null, permanentPincode || null,
-        latitude || null, longitude || null, employeeTatDays, req.user.full_name
+        latitude || null, longitude || null, assignedReviewerId, employeeTatDays, req.user.full_name
       ]
     );
 
@@ -293,7 +503,7 @@ router.post('/', authenticateAdmin, requireRoles('Super Admin', 'HR/Admin'), asy
 });
 
 // POST /api/employees/parse-bulk-file - Upload and parse Excel/CSV to extract headers & sample rows
-router.post('/parse-bulk-file', authenticateAdmin, requireRoles('Super Admin', 'HR/Admin'), upload.single('file'), async (req, res) => {
+router.post('/parse-bulk-file', authenticateAdmin, requirePermission('upload_employees', 'bulk_upload'), upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Please select an Excel (.xlsx, .xls) or CSV file.' });
@@ -309,22 +519,24 @@ router.post('/parse-bulk-file', authenticateAdmin, requireRoles('Super Admin', '
     }
 
     const headers = rows[0].map((h) => String(h || '').trim()).filter(Boolean);
-    const sampleRows = rows.slice(1, 6).map((row) => {
+    const allDataRows = rows.slice(1).map((row) => {
       const obj = {};
       headers.forEach((h, idx) => {
         obj[h] = row[idx] !== undefined ? String(row[idx]) : '';
       });
       return obj;
-    });
+    }).filter(row => Object.values(row).some(v => v !== ''));
 
-    const totalDataRows = rows.length - 1;
+    const sampleRows = allDataRows.slice(0, 5);
 
     res.json({
       filePath: req.file.path,
       fileName: req.file.originalname,
       headers,
       sampleRows,
-      totalRows: totalDataRows
+      allRows: allDataRows,
+      previewRows: allDataRows,
+      totalRows: allDataRows.length
     });
   } catch (err) {
     console.error('Parse file error:', err);
@@ -333,7 +545,7 @@ router.post('/parse-bulk-file', authenticateAdmin, requireRoles('Super Admin', '
 });
 
 // POST /api/employees/process-bulk-upload - Validate, check duplicates, and import with column mapping
-router.post('/process-bulk-upload', authenticateAdmin, requireRoles('Super Admin', 'HR/Admin'), async (req, res) => {
+router.post('/process-bulk-upload', authenticateAdmin, requirePermission('upload_employees', 'bulk_upload'), async (req, res) => {
   try {
     const { filePath, columnMapping } = req.body;
 
@@ -374,7 +586,8 @@ router.post('/process-bulk-upload', authenticateAdmin, requireRoles('Super Admin
       const designation = String(rawRow[columnMapping.designation] || '').trim() || 'Employee';
       const branch = String(rawRow[columnMapping.branch] || '').trim() || 'Chennai Headquarters';
       const location = String(rawRow[columnMapping.location] || '').trim() || 'Chennai';
-      const manager = String(rawRow[columnMapping.reporting_manager] || '').trim();
+      const manager = String(rawRow[columnMapping.reporting_manager || columnMapping.manager] || '').trim();
+      const teamLeader = String(rawRow[columnMapping.team_leader] || '').trim();
       const address = String(rawRow[columnMapping.hr_current_address] || '').trim();
       const city = String(rawRow[columnMapping.hr_city] || '').trim() || 'Chennai';
       const state = String(rawRow[columnMapping.hr_state] || '').trim() || 'Tamil Nadu';
@@ -425,6 +638,7 @@ router.post('/process-bulk-upload', authenticateAdmin, requireRoles('Super Admin
         branch,
         location,
         manager,
+        teamLeader,
         address,
         city,
         state,
@@ -438,13 +652,13 @@ router.post('/process-bulk-upload', authenticateAdmin, requireRoles('Super Admin
       await query.run(
         `INSERT INTO employees (
           employee_id, employee_name, mobile_number, alt_mobile_number, email_id, date_of_joining,
-          department, designation, branch, location, reporting_manager,
+          department, designation, branch, location, reporting_manager, team_leader,
           hr_current_address, hr_city, hr_state, hr_pincode, hr_permanent_address,
           verification_status, tat_deadline, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Not Started', datetime('now', '+' || ? || ' days'), ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Not Started', datetime('now', '+' || ? || ' days'), ?)`,
         [
           rec.empId, rec.empName, rec.mobile, rec.altMobile || null, rec.email, rec.doj,
-          rec.dept, rec.designation, rec.branch, rec.location, rec.manager || null,
+          rec.dept, rec.designation, rec.branch, rec.location, rec.manager || null, rec.teamLeader || null,
           rec.address, rec.city, rec.state, rec.pincode, rec.permAddress || null,
           employeeTatDays, req.user.full_name
         ]
@@ -510,8 +724,241 @@ router.post('/process-bulk-upload', authenticateAdmin, requireRoles('Super Admin
   }
 });
 
+// PUT /api/employees/:id - Update Employee Details (Admin Only)
+router.put('/:id', authenticateAdmin, requirePermission('edit_employee'), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const employee = await query.get(
+      'SELECT * FROM employees WHERE employee_id = ? OR id = ?',
+      [id, id]
+    );
+
+    if (!employee) {
+      return res.status(404).json({ error: 'Employee not found.' });
+    }
+
+    if (isTeamLeader(req.user) && employee.assigned_reviewer_id !== req.user.id) {
+      return res.status(403).json({ error: 'Access restricted: You cannot edit employee records not assigned to you.' });
+    }
+
+    const empId = employee.employee_id;
+
+    const {
+      employeeName,
+      mobileNumber,
+      altMobileNumber,
+      emailId,
+      dateOfJoining,
+      department,
+      designation,
+      branch,
+      location,
+      reportingManager,
+      manager,
+      teamLeader,
+      currentAddress,
+      addressLine1,
+      addressLine2,
+      area,
+      landmark,
+      city,
+      district,
+      state,
+      pincode,
+      permanentAddress,
+      permanentPincode
+    } = req.body;
+
+    if (!employeeName || !mobileNumber || !dateOfJoining || !department || !branch || !currentAddress || !city || !state || !pincode) {
+      return res.status(400).json({ error: 'Please provide all mandatory employee and address fields.' });
+    }
+
+    const name = employeeName.trim();
+    const phone = mobileNumber.trim();
+    const altPhone = altMobileNumber !== undefined ? (altMobileNumber ? altMobileNumber.trim() : null) : employee.alt_mobile_number;
+    const email = emailId !== undefined ? (emailId ? emailId.trim() : '') : (employee.email_id || '');
+    const doj = dateOfJoining.trim();
+    const dept = department.trim();
+    const desig = designation ? designation.trim() : 'Employee';
+    const br = branch.trim();
+    const loc = location ? location.trim() : city.trim();
+    const repMgr = reportingManager !== undefined
+      ? (reportingManager ? reportingManager.trim() : null)
+      : (manager !== undefined ? (manager ? manager.trim() : null) : employee.reporting_manager);
+    const tl = teamLeader !== undefined
+      ? (teamLeader ? teamLeader.trim() : null)
+      : employee.team_leader;
+
+    // Strict validation: Verify Manager - Team Leader reporting relationship
+    if (repMgr && tl) {
+      const mgrUser = await query.get(
+        `SELECT id, username, full_name FROM users
+         WHERE (LOWER(role) = 'manager' OR role = 'MANAGER')
+           AND (CAST(id AS TEXT) = ? OR LOWER(username) = LOWER(?) OR LOWER(full_name) = LOWER(?))
+           AND is_active = 1`,
+        [repMgr, repMgr, repMgr]
+      );
+
+      const tlUser = await query.get(
+        `SELECT id, username, full_name, manager FROM users
+         WHERE role = 'Team Leader'
+           AND (CAST(id AS TEXT) = ? OR LOWER(username) = LOWER(?) OR LOWER(full_name) = LOWER(?))`,
+        [tl, tl, tl]
+      );
+
+      if (mgrUser && tlUser && tlUser.manager) {
+        const matches = (
+          tlUser.manager.toLowerCase().trim() === mgrUser.full_name.toLowerCase().trim() ||
+          tlUser.manager.toLowerCase().trim() === mgrUser.username.toLowerCase().trim() ||
+          tlUser.manager.toString() === mgrUser.id.toString()
+        );
+
+        if (!matches) {
+          return res.status(400).json({
+            error: `Validation error: Selected Team Leader '${tlUser.full_name}' does not report to Manager '${mgrUser.full_name}'.`
+          });
+        }
+      }
+    }
+
+    // Strict validation: Verify Branch - Location relationship
+    if (br && loc) {
+      const branchRecord = await query.get(
+        'SELECT id, branch_name FROM branches WHERE LOWER(TRIM(branch_name)) = LOWER(TRIM(?)) OR UPPER(TRIM(branch_code)) = UPPER(TRIM(?))',
+        [br, br]
+      );
+      if (branchRecord) {
+        const configuredLocs = await query.all(
+          'SELECT id, location_name, is_active FROM locations WHERE branch_id = ?',
+          [branchRecord.id]
+        );
+        if (configuredLocs.length > 0) {
+          const locMatch = configuredLocs.find(
+            (l) => l.location_name.toLowerCase().trim() === loc.toLowerCase().trim()
+          );
+          if (!locMatch) {
+            return res.status(400).json({
+              error: `Validation error: Location '${loc}' does not belong to branch '${branchRecord.branch_name}'.`
+            });
+          }
+        }
+      }
+    }
+
+    let assignedReviewerId = employee.assigned_reviewer_id;
+    if (tl) {
+      const tlUser = await query.get(
+        "SELECT id FROM users WHERE (full_name = ? OR username = ?) AND role = 'Team Leader'",
+        [tl, tl]
+      );
+      if (tlUser) {
+        assignedReviewerId = tlUser.id;
+      }
+    }
+
+    const addr = currentAddress.trim();
+    const line1 = addressLine1 ? addressLine1.trim() : null;
+    const line2 = addressLine2 ? addressLine2.trim() : null;
+    const ar = area ? area.trim() : null;
+    const lmark = landmark ? landmark.trim() : null;
+    const c = city.trim();
+    const dist = district ? district.trim() : null;
+    const s = state.trim();
+    const pin = pincode.trim();
+    const permAddr = permanentAddress ? permanentAddress.trim() : null;
+    const permPin = permanentPincode ? permanentPincode.trim() : null;
+
+    // Check if address changed
+    const addressChanged = (
+      addr !== employee.hr_current_address ||
+      c !== employee.hr_city ||
+      s !== employee.hr_state ||
+      pin !== employee.hr_pincode
+    );
+
+    await query.run(
+      `UPDATE employees SET
+        employee_name = ?,
+        mobile_number = ?,
+        alt_mobile_number = ?,
+        email_id = ?,
+        date_of_joining = ?,
+        department = ?,
+        designation = ?,
+        branch = ?,
+        location = ?,
+        reporting_manager = ?,
+        team_leader = ?,
+        assigned_reviewer_id = ?,
+        hr_current_address = ?,
+        hr_address_line1 = ?,
+        hr_address_line2 = ?,
+        hr_area = ?,
+        hr_landmark = ?,
+        hr_city = ?,
+        hr_district = ?,
+        hr_state = ?,
+        hr_pincode = ?,
+        hr_permanent_address = ?,
+        hr_permanent_pincode = ?,
+        updated_by = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE employee_id = ?`,
+      [
+        name, phone, altPhone, email, doj,
+        dept, desig, br, loc, repMgr, tl, assignedReviewerId,
+        addr, line1, line2, ar, lmark,
+        c, dist, s, pin, permAddr, permPin,
+        req.user.full_name,
+        empId
+      ]
+    );
+
+    // If address changed, update verification_progress submitted_address and re-trigger geocoding
+    if (addressChanged) {
+      await query.run(
+        `UPDATE verification_progress 
+         SET submitted_address = ?, last_saved_at = CURRENT_TIMESTAMP
+         WHERE employee_id = ? AND current_step <= 2`,
+        [addr, empId]
+      );
+
+      // Re-enqueue for automatic geocoding
+      enqueueEmployees(empId).catch(e => console.warn('[AUTOMATIC GEOCODING] Re-enqueue error on update:', e));
+    }
+
+    // Insert audit log
+    await query.run(
+      `INSERT INTO audit_logs (actor_type, actor_id, actor_name, action, employee_id, ip_address, details)
+       VALUES ('HR', ?, ?, 'Employee Record Updated', ?, ?, ?)`,
+      [
+        req.user.id.toString(),
+        req.user.full_name,
+        empId,
+        req.ip,
+        `Updated details for employee ${name} (${empId}).${addressChanged ? ' HR address updated and re-queued for geolocation.' : ''}`
+      ]
+    );
+
+    const updatedEmployee = await query.get(
+      'SELECT * FROM employees WHERE employee_id = ?',
+      [empId]
+    );
+
+    res.json({
+      success: true,
+      message: `Employee ${name} (${empId}) updated successfully.`,
+      employee: updatedEmployee
+    });
+  } catch (err) {
+    console.error('Update employee error:', err);
+    res.status(500).json({ error: 'Failed to update employee details.' });
+  }
+});
+
 // DELETE /api/employees/:id - Permanently Delete Employee & Associated Cases (Admin Only)
-router.delete('/:id', authenticateAdmin, requireRoles('Super Admin', 'HR/Admin'), async (req, res) => {
+router.delete('/:id', authenticateAdmin, requirePermission('delete_employee'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -522,6 +969,10 @@ router.delete('/:id', authenticateAdmin, requireRoles('Super Admin', 'HR/Admin')
 
     if (!employee) {
       return res.status(404).json({ error: 'Employee not found.' });
+    }
+
+    if (isTeamLeader(req.user) && employee.assigned_reviewer_id !== req.user.id) {
+      return res.status(403).json({ error: 'Access restricted: You cannot delete employee records not assigned to you.' });
     }
 
     const empId = employee.employee_id;

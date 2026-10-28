@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import { FileBarChart, FileSpreadsheet, Download, Filter, CheckCircle2, ArrowRight } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 
 export function Reports() {
+  const { user, hasPermission, hasAnyPermission, isTeamLeader } = useAuth();
   const [reportType, setReportType] = useState('employee_detailed');
   const [branch, setBranch] = useState('ALL');
   const [department, setDepartment] = useState('ALL');
@@ -61,13 +63,18 @@ export function Reports() {
     <div className="admin-content">
       {/* Header */}
       <div style={{ marginBottom: '22px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.02em', margin: 0, fontFamily: 'var(--font-heading)' }}>
             Reports & Compliance Analytics
           </h1>
           <span className="badge badge-primary" style={{ fontSize: '0.72rem', fontWeight: 600, padding: '2px 8px', borderRadius: 'var(--radius-full)' }}>
             Excel Engine
           </span>
+          {isTeamLeader && (
+            <span className="badge badge-warning" style={{ fontSize: '0.72rem', fontWeight: 600 }}>
+              Showing Assigned Records Only
+            </span>
+          )}
         </div>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '3px' }}>
           Generate standardized BGV audit spreadsheets, SLA summaries, and reviewer productivity metrics
@@ -217,15 +224,17 @@ export function Reports() {
                   <div>
                     <div style={{ fontWeight: 700, color: '#34D399', fontSize: '0.9rem' }}>Report Generated Successfully</div>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                      File: <strong style={{ color: '#FFFFFF' }}>{successResult.fileName}</strong> ({successResult.recordCount} records) saved into Download Area.
+                      File: <strong style={{ color: 'var(--text-main)' }}>{successResult.fileName}</strong> ({successResult.recordCount} records) saved into Download Area.
                     </div>
                   </div>
                 </div>
 
-                <a href="/admin/downloads" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span>Go to Download Area</span>
-                  <ArrowRight size={13} />
-                </a>
+                {hasPermission('download_reports') && (
+                  <a href="/admin/downloads" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>Go to Download Area</span>
+                    <ArrowRight size={13} />
+                  </a>
+                )}
               </div>
             )}
 

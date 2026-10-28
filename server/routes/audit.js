@@ -1,13 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const { query } = require('../db/database');
-const { authenticateAdmin } = require('../middleware/auth');
+const { authenticateAdmin, requirePermission } = require('../middleware/auth');
 const { generateExcelReport } = require('../utils/excelGenerator');
 
 // GET /api/audit - List audit events with filters & pagination
-router.get('/', authenticateAdmin, async (req, res) => {
+router.get('/', authenticateAdmin, requirePermission('view_audit_logs'), async (req, res) => {
   try {
-    const { actor, action, employeeId, startDate, endDate, page = 1, limit = 25 } = req.query;
+    const { actor, action, employeeId, tlId, agentId, startDate, endDate, page = 1, limit = 25 } = req.query;
 
     const pageNum = parseInt(page, 10) || 1;
     const limitNum = parseInt(limit, 10) || 25;
@@ -27,8 +27,18 @@ router.get('/', authenticateAdmin, async (req, res) => {
     }
 
     if (employeeId && employeeId.trim()) {
-      whereClauses.push('(employee_id LIKE ? OR case_reference LIKE ?)');
-      params.push(`%${employeeId.trim()}%`, `%${employeeId.trim()}%`);
+      whereClauses.push('(employee_id LIKE ? OR case_reference LIKE ? OR tl_id LIKE ? OR agent_id LIKE ?)');
+      params.push(`%${employeeId.trim()}%`, `%${employeeId.trim()}%`, `%${employeeId.trim()}%`, `%${employeeId.trim()}%`);
+    }
+
+    if (tlId && tlId.trim()) {
+      whereClauses.push('tl_id LIKE ?');
+      params.push(`%${tlId.trim()}%`);
+    }
+
+    if (agentId && agentId.trim()) {
+      whereClauses.push('agent_id LIKE ?');
+      params.push(`%${agentId.trim()}%`);
     }
 
     if (startDate) {
@@ -73,7 +83,7 @@ router.get('/', authenticateAdmin, async (req, res) => {
 });
 
 // POST /api/audit/export - Export audit trail to Download Area
-router.post('/export', authenticateAdmin, async (req, res) => {
+router.post('/export', authenticateAdmin, requirePermission('view_audit_logs', 'download_reports'), async (req, res) => {
   try {
     const logs = await query.all('SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 1000');
 
@@ -87,7 +97,9 @@ router.post('/export', authenticateAdmin, async (req, res) => {
         { header: 'Actor Type', key: 'actor_type' },
         { header: 'Actor Name', key: 'actor_name' },
         { header: 'Action', key: 'action' },
-        { header: 'Employee ID', key: 'employee_id' },
+        { header: 'Employee / Agent ID', key: 'employee_id' },
+        { header: 'TL ID', key: 'tl_id' },
+        { header: 'Agent ID', key: 'agent_id' },
         { header: 'Case Reference', key: 'case_reference' },
         { header: 'IP Address', key: 'ip_address' },
         { header: 'Details', key: 'details' }

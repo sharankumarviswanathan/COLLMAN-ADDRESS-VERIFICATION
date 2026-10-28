@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
 import { GeoComparisonMap } from '../map/GeoComparisonMap';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 import {
@@ -29,12 +30,18 @@ import {
   Signpost,
   Landmark,
   Navigation,
-  Ruler
+  Ruler,
+  ShieldAlert
 } from 'lucide-react';
 
 export function CaseReview() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user, hasPermission, hasAnyPermission } = useAuth();
+
+  const canApprove = hasAnyPermission('approve_cases', 'make_decision');
+  const canReject = hasAnyPermission('reject_cases', 'make_decision');
+  const canDownloadReport = hasAnyPermission('download_case_report', 'download_reports');
 
   const [caseData, setCaseData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -44,6 +51,12 @@ export function CaseReview() {
   // Modal Decision State
   const [decisionModalOpen, setDecisionModalOpen] = useState(false);
   const [selectedDecision, setSelectedDecision] = useState('VERIFIED');
+
+  useEffect(() => {
+    if (!canApprove && canReject) {
+      setSelectedDecision('VERIFICATION FAILED');
+    }
+  }, [canApprove, canReject]);
   const [reviewerRemarks, setReviewerRemarks] = useState('');
   const [failureReason, setFailureReason] = useState('');
   const [submittingDecision, setSubmittingDecision] = useState(false);
@@ -194,6 +207,16 @@ export function CaseReview() {
   async function handleSubmitDecision(e) {
     e.preventDefault();
 
+    if (selectedDecision === 'VERIFIED' && !canApprove) {
+      alert('Forbidden: Your role does not have permission to approve cases (requires approve_cases).');
+      return;
+    }
+
+    if (selectedDecision !== 'VERIFIED' && !canReject) {
+      alert('Forbidden: Your role does not have permission to reject or request reverification for cases (requires reject_cases).');
+      return;
+    }
+
     if (selectedDecision === 'VERIFICATION FAILED' && !failureReason) {
       alert('Please select a failure reason.');
       return;
@@ -240,20 +263,43 @@ export function CaseReview() {
   }
 
   if (errorMsg || !caseData || !caseData.employee) {
+    const isForbidden = errorMsg.toLowerCase().includes('forbidden') ||
+                        errorMsg.toLowerCase().includes('restricted') ||
+                        errorMsg.toLowerCase().includes('team leader');
     return (
-      <div className="admin-content">
+      <div className="admin-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
         <div style={{
-          backgroundColor: 'var(--danger-light)',
-          border: '1px solid var(--danger-border)',
-          borderRadius: 'var(--radius-md)',
-          padding: '20px',
-          color: 'var(--danger)',
-          textAlign: 'center'
+          backgroundColor: isForbidden ? 'rgba(239, 68, 68, 0.08)' : 'var(--danger-light)',
+          border: isForbidden ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid var(--danger-border)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '36px 28px',
+          color: 'var(--text-main)',
+          textAlign: 'center',
+          maxWidth: '520px',
+          width: '100%',
+          boxShadow: 'var(--shadow-md)'
         }}>
-          <h3>Failed to Load Case</h3>
-          <p>{errorMsg}</p>
-          <button className="btn btn-secondary" onClick={() => navigate('/admin/queue')} style={{ marginTop: '12px' }}>
-            Back to Queue
+          <div style={{
+            width: 52,
+            height: 52,
+            borderRadius: '50%',
+            backgroundColor: 'rgba(239, 68, 68, 0.15)',
+            color: '#EF4444',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 16px'
+          }}>
+            <ShieldAlert size={28} />
+          </div>
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#EF4444', margin: '0 0 8px' }}>
+            {isForbidden ? 'Access Restricted' : 'Failed to Load Case'}
+          </h3>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', margin: '0 0 20px', lineHeight: 1.5 }}>
+            {errorMsg || 'Case record not found or inaccessible.'}
+          </p>
+          <button className="btn btn-primary" onClick={() => navigate('/admin/queue')}>
+            Return to Verification Queue
           </button>
         </div>
       </div>
@@ -347,12 +393,14 @@ export function CaseReview() {
   const houseMeta = getPhotoEvidenceMeta('house_photo', 'house_photo');
   const doorMeta = getPhotoEvidenceMeta('door_photo', 'door_photo');
   const selfieMeta = getPhotoEvidenceMeta('selfie', 'selfie');
+  const jointSelfieMeta = getPhotoEvidenceMeta('joint_selfie', 'joint_selfie');
 
   const landmarkEvidence = getPhotoEvidenceItem('landmark_photo', 'landmark_photo');
   const streetEvidence = getPhotoEvidenceItem('street_photo', 'street_photo');
   const houseEvidence = getPhotoEvidenceItem('house_photo', 'house_photo');
   const doorEvidence = getPhotoEvidenceItem('door_photo', 'door_photo');
   const selfieEvidence = getPhotoEvidenceItem('selfie', 'selfie');
+  const jointSelfieEvidence = getPhotoEvidenceItem('joint_selfie', 'joint_selfie');
 
   const photoEvidenceCards = [
     {
@@ -389,6 +437,17 @@ export function CaseReview() {
       url: progress?.selfieUrl || selfieEvidence?.fileUrl,
       meta: selfieMeta,
       placeholder: 'No Selfie'
+    },
+    {
+      id: 'joint_selfie',
+      title: 'TL & Employee Joint Selfie',
+      url: progress?.jointSelfieUrl || jointSelfieEvidence?.fileUrl,
+      meta: {
+        ...jointSelfieMeta,
+        tlId: progress?.joint_selfie_tl_id || jointSelfieEvidence?.tl_id || employee?.team_leader || null,
+        tlName: progress?.joint_selfie_tl_name || jointSelfieEvidence?.tl_name || employee?.team_leader || null
+      },
+      placeholder: 'No Joint Selfie'
     }
   ];
 
@@ -475,6 +534,13 @@ export function CaseReview() {
         else status = 'RED';
         break;
 
+      // 5b. Employee Live Location → TL & Employee Joint Selfie (0–15 m = GREEN, 16–25 m = ORANGE, Above 25 m = RED)
+      case 'joint_selfie':
+        if (d <= 15) status = 'GREEN';
+        else if (d <= 25) status = 'ORANGE';
+        else status = 'RED';
+        break;
+
       // 6. Nearby Landmark → Street Board (0–400 m = GREEN, 401–500 m = ORANGE, Above 500 m = RED)
       case 'landmark-to-street':
         if (d <= 400) status = 'GREEN';
@@ -500,6 +566,13 @@ export function CaseReview() {
       case 'door-to-selfie':
         if (d <= 10) status = 'GREEN';
         else if (d <= 15) status = 'ORANGE';
+        else status = 'RED';
+        break;
+
+      // 10. Live Selfie → TL & Employee Joint Selfie (0–15 m = GREEN, 16–25 m = ORANGE, Above 25 m = RED)
+      case 'selfie-to-joint':
+        if (d <= 15) status = 'GREEN';
+        else if (d <= 25) status = 'ORANGE';
         else status = 'RED';
         break;
 
@@ -580,6 +653,14 @@ export function CaseReview() {
       photoLng: selfieMeta.lng,
       hasPhotoCoords: selfieMeta.hasCoords,
       distanceMeters: calculateHaversineDistance(empLiveLat, empLiveLng, selfieMeta.lat, selfieMeta.lng)
+    },
+    {
+      id: 'joint_selfie',
+      photoTitle: 'TL & Employee Joint Selfie',
+      photoLat: jointSelfieMeta.lat,
+      photoLng: jointSelfieMeta.lng,
+      hasPhotoCoords: jointSelfieMeta.hasCoords,
+      distanceMeters: calculateHaversineDistance(empLiveLat, empLiveLng, jointSelfieMeta.lat, jointSelfieMeta.lng)
     }
   ];
 
@@ -628,6 +709,17 @@ export function CaseReview() {
       toLng: selfieMeta.lng,
       hasBothCoords: doorMeta.hasCoords && selfieMeta.hasCoords,
       distanceMeters: calculateHaversineDistance(doorMeta.lat, doorMeta.lng, selfieMeta.lat, selfieMeta.lng)
+    },
+    {
+      id: 'selfie-to-joint',
+      fromTitle: 'Live Selfie',
+      toTitle: 'TL & Employee Joint Selfie',
+      fromLat: selfieMeta.lat,
+      fromLng: selfieMeta.lng,
+      toLat: jointSelfieMeta.lat,
+      toLng: jointSelfieMeta.lng,
+      hasBothCoords: selfieMeta.hasCoords && jointSelfieMeta.hasCoords,
+      distanceMeters: calculateHaversineDistance(selfieMeta.lat, selfieMeta.lng, jointSelfieMeta.lat, jointSelfieMeta.lng)
     }
   ];
 
@@ -776,23 +868,27 @@ export function CaseReview() {
 
         {/* Right Decision Buttons */}
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button
-            id="btn-generate-pdf-report"
-            className="btn btn-secondary btn-sm"
-            onClick={handleGenerateReport}
-          >
-            <Download size={14} />
-            <span>Generate PDF Report</span>
-          </button>
+          {canDownloadReport && (
+            <button
+              id="btn-generate-pdf-report"
+              className="btn btn-secondary btn-sm"
+              onClick={handleGenerateReport}
+            >
+              <Download size={14} />
+              <span>Generate PDF Report</span>
+            </button>
+          )}
 
-          <button
-            id="btn-open-decision-modal"
-            className="btn btn-primary btn-sm"
-            onClick={() => setDecisionModalOpen(true)}
-          >
-            <ShieldCheck size={16} />
-            <span>Take Decision</span>
-          </button>
+          {(canApprove || canReject) && (
+            <button
+              id="btn-open-decision-modal"
+              className="btn btn-primary btn-sm"
+              onClick={() => setDecisionModalOpen(true)}
+            >
+              <ShieldCheck size={16} />
+              <span>Take Decision</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1509,7 +1605,7 @@ export function CaseReview() {
                 <Camera size={18} color="var(--primary)" />
                 <h3 style={{ fontSize: '1.05rem', color: 'var(--primary)' }}>5. Photo Evidence</h3>
               </div>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>5 Evidence Photos • Click to zoom</span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>6 Evidence Photos • Click to zoom</span>
             </div>
 
             <div className="evidence-gallery-grid">
@@ -1542,6 +1638,23 @@ export function CaseReview() {
 
                   {/* Individual Live Location Details Card */}
                   <div className="evidence-photo-meta">
+                    {card.meta?.tlName && (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        background: '#EEF2FF',
+                        border: '1px solid #C7D2FE',
+                        borderRadius: '4px',
+                        padding: '2px 6px',
+                        fontSize: '0.72rem',
+                        color: '#4338CA',
+                        fontWeight: 700,
+                        marginBottom: '4px'
+                      }}>
+                        <span>TL: {card.meta.tlName} {card.meta.tlId && card.meta.tlId !== card.meta.tlName ? `(${card.meta.tlId})` : ''}</span>
+                      </div>
+                    )}
                     {card.meta.hasCoords ? (
                       <>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--primary)', fontWeight: 600 }}>
@@ -2021,9 +2134,24 @@ export function CaseReview() {
                   paddingBottom: '8px',
                   borderBottom: '1px solid var(--border-color)'
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, color: 'var(--primary)', fontSize: '0.92rem' }}>
-                    <FileText size={16} color="var(--primary)" />
-                    <span>Automatic Address Proof Matching</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, color: 'var(--primary)', fontSize: '0.92rem' }}>
+                      <FileText size={16} color="var(--primary)" />
+                      <span>Automatic Address Proof Matching</span>
+                    </div>
+                    {docMatch.languageSummary && docMatch.languageSummary !== 'Unknown' && (
+                      <span style={{
+                        fontSize: '0.72rem',
+                        fontWeight: 600,
+                        padding: '2px 8px',
+                        borderRadius: '12px',
+                        backgroundColor: '#EFF6FF',
+                        color: '#1D4ED8',
+                        border: '1px solid #BFDBFE'
+                      }}>
+                        🌐 {docMatch.languageSummary}
+                      </span>
+                    )}
                   </div>
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                     OCR & Intelligent Text Extraction
@@ -2491,14 +2619,16 @@ export function CaseReview() {
               </div>
             )}
 
-            <button
-              className="btn btn-primary btn-sm"
-              style={{ marginTop: '16px', width: '100%' }}
-              onClick={() => setDecisionModalOpen(true)}
-            >
-              <ShieldCheck size={16} />
-              <span>{caseRecord?.final_decision ? 'Update Decision' : 'Submit Decision'}</span>
-            </button>
+            {(canApprove || canReject) && (
+              <button
+                className="btn btn-primary btn-sm"
+                style={{ marginTop: '16px', width: '100%' }}
+                onClick={() => setDecisionModalOpen(true)}
+              >
+                <ShieldCheck size={16} />
+                <span>{caseRecord?.final_decision ? 'Update Decision' : 'Submit Decision'}</span>
+              </button>
+            )}
           </div>
 
           {/* SECTION 8: Timeline / Audit Trail */}
@@ -2568,36 +2698,50 @@ export function CaseReview() {
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                     {[
-                      { id: 'VERIFIED', label: 'VERIFIED', color: 'var(--success)' },
-                      { id: 'VERIFICATION FAILED', label: 'VERIFICATION FAILED', color: 'var(--danger)' },
-                      { id: 'REVERIFICATION REQUIRED', label: 'REVERIFICATION REQ.', color: 'var(--warning)' },
-                      { id: 'MORE INFORMATION REQUIRED', label: 'MORE INFO REQUIRED', color: 'var(--accent)' }
-                    ].map((d) => (
-                      <label
-                        key={d.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          padding: '12px',
-                          borderRadius: 'var(--radius-sm)',
-                          backgroundColor: selectedDecision === d.id ? 'var(--bg-card-hover)' : 'var(--bg-card)',
-                          border: `2px solid ${selectedDecision === d.id ? d.color : 'var(--border-color)'}`,
-                          cursor: 'pointer',
-                          fontSize: '0.85rem',
-                          fontWeight: 700,
-                          color: selectedDecision === d.id ? d.color : 'var(--text-main)'
-                        }}
-                      >
-                        <input
-                          type="radio"
-                          name="bgvDecision"
-                          checked={selectedDecision === d.id}
-                          onChange={() => setSelectedDecision(d.id)}
-                        />
-                        <span>{d.label}</span>
-                      </label>
-                    ))}
+                      { id: 'VERIFIED', label: 'VERIFIED', color: 'var(--success)', requiredPerm: 'approve' },
+                      { id: 'VERIFICATION FAILED', label: 'VERIFICATION FAILED', color: 'var(--danger)', requiredPerm: 'reject' },
+                      { id: 'REVERIFICATION REQUIRED', label: 'REVERIFICATION REQ.', color: 'var(--warning)', requiredPerm: 'reject' },
+                      { id: 'MORE INFORMATION REQUIRED', label: 'MORE INFO REQUIRED', color: 'var(--accent)', requiredPerm: 'reject' }
+                    ].map((d) => {
+                      const isAllowed = d.requiredPerm === 'approve' ? canApprove : canReject;
+                      const isSelected = selectedDecision === d.id;
+                      return (
+                        <label
+                          key={d.id}
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '4px',
+                            padding: '12px',
+                            borderRadius: 'var(--radius-sm)',
+                            backgroundColor: isSelected ? 'var(--bg-card-hover)' : 'var(--bg-card)',
+                            border: `2px solid ${isSelected ? d.color : 'var(--border-color)'}`,
+                            cursor: isAllowed ? 'pointer' : 'not-allowed',
+                            opacity: isAllowed ? 1 : 0.5,
+                            fontSize: '0.85rem',
+                            fontWeight: 700,
+                            color: isSelected ? d.color : 'var(--text-main)',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <input
+                              type="radio"
+                              name="bgvDecision"
+                              disabled={!isAllowed}
+                              checked={isSelected}
+                              onChange={() => isAllowed && setSelectedDecision(d.id)}
+                            />
+                            <span>{d.label}</span>
+                          </div>
+                          {!isAllowed && (
+                            <span style={{ fontSize: '0.67rem', color: '#EF4444', fontWeight: 600, marginLeft: '22px' }}>
+                              Requires {d.requiredPerm === 'approve' ? 'Approve' : 'Reject'} Permission
+                            </span>
+                          )}
+                        </label>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -2669,6 +2813,14 @@ export function CaseReview() {
                     <span style={{ color: '#15803D', fontWeight: 600 }}>GPS Accuracy: {zoomImage.meta.accuracy !== 'N/A' ? `±${zoomImage.meta.accuracy}` : 'N/A'}</span>
                     <span>•</span>
                     <span style={{ color: '#64748B' }}>Captured: {zoomImage.meta.date} at {zoomImage.meta.time}</span>
+                    {zoomImage.meta?.tlName && (
+                      <>
+                        <span>•</span>
+                        <span style={{ color: '#4338CA', fontWeight: 700 }}>
+                          TL: {zoomImage.meta.tlName} {zoomImage.meta.tlId && zoomImage.meta.tlId !== zoomImage.meta.tlName ? `(${zoomImage.meta.tlId})` : ''}
+                        </span>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <div style={{ fontSize: '0.78rem', color: '#94A3B8', fontStyle: 'italic', marginTop: '2px' }}>

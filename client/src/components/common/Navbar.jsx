@@ -10,7 +10,6 @@ import {
   Sliders,
   LogOut,
   User,
-  Search,
   Bell,
   Settings,
   Sparkles,
@@ -28,19 +27,17 @@ import {
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 
-export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse }) {
-  const { user, logout } = useAuth();
+export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse, isLocked, lockMode, onSetLockMode }) {
+  const { user, logout, hasPermission, hasAnyPermission } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [navMenuOpen, setNavMenuOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const dropdownRef = useRef(null);
   const navMenuRef = useRef(null);
 
-  const isSuperAdmin = user?.role === 'Super Admin';
-  const isReviewer = ['Super Admin', 'HR/Admin', 'BGV Reviewer'].includes(user?.role);
   const displayName = user?.fullName?.split(' ')[0] || user?.username || 'Admin';
+  const isSuperAdmin = user?.role === 'Super Admin';
 
   // Close dropdowns when clicking outside or pressing Escape
   useEffect(() => {
@@ -68,11 +65,6 @@ export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse }) {
     };
   }, []);
 
-  function handleSearchSubmit(e) {
-    if (e.key === 'Enter' && searchQuery.trim()) {
-      navigate(`/admin/employees?search=${encodeURIComponent(searchQuery.trim())}`);
-    }
-  }
 
   return (
     <header className="admin-topbar">
@@ -82,7 +74,13 @@ export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse }) {
           <button
             id="btn-topbar-nav-menu"
             type="button"
-            onClick={() => setNavMenuOpen((prev) => !prev)}
+            onClick={() => {
+              if (window.innerWidth <= 992 && typeof onMenuToggle === 'function') {
+                onMenuToggle();
+              } else {
+                setNavMenuOpen((prev) => !prev);
+              }
+            }}
             className={`topbar-circle-btn ${navMenuOpen ? 'active' : ''}`}
             style={{ width: 34, height: 34 }}
             title="Navigation Menu"
@@ -105,25 +103,29 @@ export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse }) {
               </div>
 
               <div className="dropdown-nav-body">
-                <Link
-                  to="/admin/dashboard"
-                  className="dropdown-item"
-                  onClick={() => setNavMenuOpen(false)}
-                >
-                  <LayoutDashboard size={15} color="var(--accent-purple)" />
-                  <span>Dashboard</span>
-                </Link>
+                {hasPermission('view_dashboard') && (
+                  <Link
+                    to="/admin/dashboard"
+                    className="dropdown-item"
+                    onClick={() => setNavMenuOpen(false)}
+                  >
+                    <LayoutDashboard size={15} color="var(--accent-purple)" />
+                    <span>Dashboard</span>
+                  </Link>
+                )}
 
-                <Link
-                  to="/admin/employees"
-                  className="dropdown-item"
-                  onClick={() => setNavMenuOpen(false)}
-                >
-                  <Users size={15} color="var(--accent-purple)" />
-                  <span>Employee Master</span>
-                </Link>
+                {hasPermission('view_employees') && (
+                  <Link
+                    to="/admin/employees"
+                    className="dropdown-item"
+                    onClick={() => setNavMenuOpen(false)}
+                  >
+                    <Users size={15} color="var(--accent-purple)" />
+                    <span>Employee Master</span>
+                  </Link>
+                )}
 
-                {isReviewer && (
+                {hasAnyPermission('view_queue', 'review_cases') && (
                   <Link
                     to="/admin/queue"
                     className="dropdown-item"
@@ -134,7 +136,7 @@ export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse }) {
                   </Link>
                 )}
 
-                {isReviewer && (
+                {hasAnyPermission('view_queue', 'review_cases') && (
                   <Link
                     to="/admin/reverification"
                     className="dropdown-item"
@@ -145,34 +147,40 @@ export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse }) {
                   </Link>
                 )}
 
-                <Link
-                  to="/admin/reports"
-                  className="dropdown-item"
-                  onClick={() => setNavMenuOpen(false)}
-                >
-                  <FileBarChart size={15} color="var(--accent-purple)" />
-                  <span>Reports & Analytics</span>
-                </Link>
+                {hasPermission('view_reports') && (
+                  <Link
+                    to="/admin/reports"
+                    className="dropdown-item"
+                    onClick={() => setNavMenuOpen(false)}
+                  >
+                    <FileBarChart size={15} color="var(--accent-purple)" />
+                    <span>Reports & Analytics</span>
+                  </Link>
+                )}
 
-                <Link
-                  to="/admin/downloads"
-                  className="dropdown-item"
-                  onClick={() => setNavMenuOpen(false)}
-                >
-                  <Download size={15} color="var(--accent-purple)" />
-                  <span>Download Area</span>
-                </Link>
+                {hasPermission('download_reports') && (
+                  <Link
+                    to="/admin/downloads"
+                    className="dropdown-item"
+                    onClick={() => setNavMenuOpen(false)}
+                  >
+                    <Download size={15} color="var(--accent-purple)" />
+                    <span>Download Area</span>
+                  </Link>
+                )}
 
-                <Link
-                  to="/admin/audit"
-                  className="dropdown-item"
-                  onClick={() => setNavMenuOpen(false)}
-                >
-                  <ScrollText size={15} color="var(--accent-purple)" />
-                  <span>Audit Logs</span>
-                </Link>
+                {hasPermission('view_audit_logs') && (
+                  <Link
+                    to="/admin/audit"
+                    className="dropdown-item"
+                    onClick={() => setNavMenuOpen(false)}
+                  >
+                    <ScrollText size={15} color="var(--accent-purple)" />
+                    <span>Audit Logs</span>
+                  </Link>
+                )}
 
-                {isSuperAdmin && (
+                {hasAnyPermission('view_users', 'manage_users', 'manage_roles') && (
                   <Link
                     to="/admin/users"
                     className="dropdown-item"
@@ -183,7 +191,18 @@ export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse }) {
                   </Link>
                 )}
 
-                {isSuperAdmin && (
+                {hasAnyPermission('manage_roles', 'manage_permissions', 'view_users') && (
+                  <Link
+                    to="/admin/roles"
+                    className="dropdown-item"
+                    onClick={() => setNavMenuOpen(false)}
+                  >
+                    <ShieldCheck size={15} color="var(--accent-purple)" />
+                    <span>Roles & Permissions</span>
+                  </Link>
+                )}
+
+                {hasAnyPermission('view_masters', 'manage_masters') && (
                   <Link
                     to="/admin/masters"
                     className="dropdown-item"
@@ -210,7 +229,11 @@ export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse }) {
                     ) : (
                       <PanelLeftClose size={15} color="var(--accent-purple)" />
                     )}
-                    <span>{isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}</span>
+                    <span>
+                      {isLocked
+                        ? (isCollapsed ? 'Unlock Sidebar (Auto Mode)' : 'Unlock Sidebar (Auto Mode)')
+                        : (isCollapsed ? 'Expand & Lock Sidebar' : 'Lock Sidebar Open')}
+                    </span>
                   </button>
                 )}
 
@@ -241,17 +264,6 @@ export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse }) {
 
       {/* Right controls matching reference style: Search pill, Circular icons, Theme Toggle, Profile chip */}
       <div className="topbar-right">
-        {/* Search pill: "Ask Collman BGV AI or search employee..." */}
-        <div className="topbar-search-pill">
-          <Search size={15} color="var(--text-muted)" />
-          <input
-            type="text"
-            placeholder="Search Emp ID, candidate, location..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={handleSearchSubmit}
-          />
-        </div>
 
         {/* Circular Theme Toggle Button (Dark / Light Mode) */}
         <button
@@ -280,7 +292,7 @@ export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse }) {
         </button>
 
         {/* Circular Settings Button */}
-        {isSuperAdmin && (
+        {(isSuperAdmin || hasAnyPermission('view_masters', 'manage_masters')) && (
           <button
             type="button"
             className="topbar-circle-btn"
@@ -380,7 +392,7 @@ export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse }) {
                 <span>Verification Queue</span>
               </Link>
 
-              {isSuperAdmin && (
+              {(isSuperAdmin || hasAnyPermission('view_masters', 'manage_masters')) && (
                 <Link
                   to="/admin/masters"
                   className="dropdown-item"

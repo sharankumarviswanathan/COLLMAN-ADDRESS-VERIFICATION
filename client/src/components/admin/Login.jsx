@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { ShieldCheck, LogIn, Lock, User, AlertCircle, ArrowRight, Sparkles } from 'lucide-react';
+import { ShieldCheck, LogIn, Lock, User, AlertCircle, ArrowRight } from 'lucide-react';
 
 export function Login() {
   const navigate = useNavigate();
@@ -32,19 +32,6 @@ export function Login() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function quickLogin(u, p) {
-    setUsername(u);
-    setPassword(p);
-    setErrorMsg('');
-    setLoading(true);
-    login(u, p)
-      .then(() => navigate('/admin/dashboard'))
-      .catch((err) => {
-        setErrorMsg(err.message);
-        setLoading(false);
-      });
   }
 
   return (
@@ -157,7 +144,7 @@ export function Login() {
         <form onSubmit={handleSubmit}>
           <div className="form-group" style={{ marginBottom: '18px' }}>
             <label className="form-label" htmlFor="login-username" style={{ fontSize: '0.825rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-              Username or Corporate Email
+              Employee ID or Corporate Email
             </label>
             <div style={{ position: 'relative' }}>
               <User size={16} color="var(--text-muted)" style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)' }} />
@@ -165,7 +152,7 @@ export function Login() {
                 id="login-username"
                 type="text"
                 className="form-control"
-                placeholder="e.g. admin or reviewer"
+                placeholder="e.g. COL00101 or admin"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 style={{ paddingLeft: '40px', height: '44px', fontSize: '0.9rem', borderRadius: 'var(--radius-full)' }}
@@ -205,64 +192,7 @@ export function Login() {
           </button>
         </form>
 
-        {/* Quick Demo Accounts */}
-        <div style={{
-          marginTop: '28px',
-          paddingTop: '20px',
-          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-          fontSize: '0.825rem'
-        }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '6px',
-            color: 'var(--text-secondary)',
-            marginBottom: '12px',
-            fontWeight: 600,
-            fontSize: '0.76rem',
-            textTransform: 'uppercase',
-            letterSpacing: '0.04em'
-          }}>
-            <Sparkles size={13} color="#C084FC" />
-            <span>Quick Demo Role Sign In</span>
-          </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => quickLogin('admin', 'admin123')}
-              style={{ justifyContent: 'center', fontSize: '0.8rem', padding: '8px 10px', borderRadius: 'var(--radius-full)' }}
-            >
-              Super Admin
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => quickLogin('reviewer1', 'reviewer123')}
-              style={{ justifyContent: 'center', fontSize: '0.8rem', padding: '8px 10px', borderRadius: 'var(--radius-full)' }}
-            >
-              BGV Reviewer
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => quickLogin('hr_admin', 'hr123')}
-              style={{ justifyContent: 'center', fontSize: '0.8rem', padding: '8px 10px', borderRadius: 'var(--radius-full)' }}
-            >
-              HR Lead
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => quickLogin('viewer', 'viewer123')}
-              style={{ justifyContent: 'center', fontSize: '0.8rem', padding: '8px 10px', borderRadius: 'var(--radius-full)' }}
-            >
-              View Only
-            </button>
-          </div>
-        </div>
 
         {/* Candidate Self Verification Portal Link */}
         <div style={{

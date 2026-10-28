@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { query } = require('../db/database');
-const { authenticateAdmin, requireRoles } = require('../middleware/auth');
+const { authenticateAdmin, requireRoles, requirePermission, checkUserHasPermission, isTeamLeader } = require('../middleware/auth');
 const { generateVerificationReportPDF } = require('../utils/pdfGenerator');
 const {
   calculateDistanceMeters,
@@ -52,7 +52,7 @@ function getDocMeta(filePath) {
 }
 
 // GET /api/review/:caseRefOrEmpId - Fetch comprehensive case review package
-router.get('/:caseRefOrEmpId', authenticateAdmin, async (req, res) => {
+router.get('/:caseRefOrEmpId', authenticateAdmin, requirePermission('review_cases', 'view_queue'), async (req, res) => {
   try {
     const { caseRefOrEmpId } = req.params;
 
@@ -79,6 +79,17 @@ router.get('/:caseRefOrEmpId', authenticateAdmin, async (req, res) => {
        WHERE vc.employee_id = ?`,
       [empId]
     );
+
+    // TL access restriction: Team Leaders can ONLY access cases assigned to them
+    if (isTeamLeader(req.user)) {
+      const isAssigned = (
+        employee.assigned_reviewer_id === req.user.id ||
+        (caseRecord && caseRecord.assigned_reviewer_id === req.user.id)
+      );
+      if (!isAssigned) {
+        return res.status(403).json({ error: 'Access restricted: Team Leaders can only access verification cases assigned to them.' });
+      }
+    }
 
     // Fetch current progress / verification submission
     const progress = await query.get(
@@ -123,6 +134,7 @@ router.get('/:caseRefOrEmpId', authenticateAdmin, async (req, res) => {
           entrancePhotoUrl: formatFileUrl(progress.entrance_photo_path),
           streetPhotoUrl: formatFileUrl(progress.street_photo_path),
           landmarkPhotoUrl: formatFileUrl(progress.landmark_photo_path),
+          jointSelfieUrl: formatFileUrl(progress.joint_selfie_path),
           documentUrl: formatFileUrl(progress.document_path),
           documentBackUrl: formatFileUrl(progress.document_back_path),
           documentMeta: getDocMeta(progress.document_path),
@@ -160,13 +172,24 @@ router.get('/:caseRefOrEmpId', authenticateAdmin, async (req, res) => {
 });
 
 // POST /api/review/:caseRefOrEmpId/decision - Submit BGV Decision
-router.post('/:caseRefOrEmpId/decision', authenticateAdmin, requireRoles('Super Admin', 'HR/Admin', 'BGV Reviewer'), async (req, res) => {
+router.post('/:caseRefOrEmpId/decision', authenticateAdmin, async (req, res) => {
   try {
     const { caseRefOrEmpId } = req.params;
     const { decision, remarks, failureReason } = req.body;
 
     if (!decision || !['VERIFIED', 'VERIFICATION FAILED', 'REVERIFICATION REQUIRED', 'MORE INFORMATION REQUIRED'].includes(decision)) {
       return res.status(400).json({ error: 'Please select a valid BGV decision.' });
+    }
+
+    // Separate Approve vs Reject permissions (Requirement 5)
+    if (decision === 'VERIFIED') {
+      if (!checkUserHasPermission(req.user, 'approve_cases', 'make_decision')) {
+        return res.status(403).json({ error: 'Permission denied: You do not have permission to Approve BGV cases.' });
+      }
+    } else if (['VERIFICATION FAILED', 'REVERIFICATION REQUIRED', 'MORE INFORMATION REQUIRED'].includes(decision)) {
+      if (!checkUserHasPermission(req.user, 'reject_cases', 'make_decision')) {
+        return res.status(403).json({ error: 'Permission denied: You do not have permission to Reject or Fail BGV cases.' });
+      }
     }
 
     if (decision === 'VERIFICATION FAILED' && !failureReason) {
@@ -179,7 +202,7 @@ router.post('/:caseRefOrEmpId/decision', authenticateAdmin, requireRoles('Super 
 
     // Identify employee
     const employee = await query.get(
-      `SELECT e.*, vc.id as case_id, vc.case_reference, vc.current_attempt_number
+      `SELECT e.*, vc.id as case_id, vc.case_reference, vc.current_attempt_number, vc.assigned_reviewer_id as case_assigned_reviewer_id
        FROM employees e
        LEFT JOIN verification_cases vc ON e.employee_id = vc.employee_id
        WHERE e.employee_id = ? OR vc.case_reference = ?`,
@@ -188,6 +211,17 @@ router.post('/:caseRefOrEmpId/decision', authenticateAdmin, requireRoles('Super 
 
     if (!employee) {
       return res.status(404).json({ error: 'Employee or case not found.' });
+    }
+
+    // TL access restriction: Team Leaders can ONLY submit decisions for cases assigned to them
+    if (isTeamLeader(req.user)) {
+      const isAssigned = (
+        employee.assigned_reviewer_id === req.user.id ||
+        employee.case_assigned_reviewer_id === req.user.id
+      );
+      if (!isAssigned) {
+        return res.status(403).json({ error: 'Access restricted: You cannot submit decisions for cases not assigned to you.' });
+      }
     }
 
     const empId = employee.employee_id;
@@ -281,6 +315,14 @@ router.post('/:caseRefOrEmpId/decision', authenticateAdmin, requireRoles('Super 
           landmark_photo_longitude = NULL,
           landmark_photo_accuracy = NULL,
           landmark_photo_captured_at = NULL,
+          joint_selfie_captured = 0,
+          joint_selfie_path = NULL,
+          joint_selfie_latitude = NULL,
+          joint_selfie_longitude = NULL,
+          joint_selfie_accuracy = NULL,
+          joint_selfie_captured_at = NULL,
+          joint_selfie_tl_id = NULL,
+          joint_selfie_tl_name = NULL,
           address_proof_uploaded = 0,
           document_type = NULL,
           document_path = NULL,
@@ -353,12 +395,12 @@ router.post('/:caseRefOrEmpId/decision', authenticateAdmin, requireRoles('Super 
 });
 
 // POST /api/review/:caseRefOrEmpId/generate-report - Explicitly generate PDF report into Download Area
-router.post('/:caseRefOrEmpId/generate-report', authenticateAdmin, async (req, res) => {
+router.post('/:caseRefOrEmpId/generate-report', authenticateAdmin, requirePermission('download_case_report', 'download_reports', 'review_cases'), async (req, res) => {
   try {
     const { caseRefOrEmpId } = req.params;
 
     const fullCaseData = await query.get(
-      `SELECT e.*, vc.case_reference, vc.final_decision, vc.final_remarks, vc.reviewed_by, vc.reviewed_at,
+      `SELECT e.*, vc.case_reference, vc.final_decision, vc.final_remarks, vc.reviewed_by, vc.reviewed_at, vc.assigned_reviewer_id as case_reviewer_id,
               vp.submitted_address, vp.address_is_same, vp.address_difference_reason,
               vp.residence_type, vp.staying_since_month, vp.staying_since_year,
               vp.latitude, vp.longitude, vp.gps_accuracy, vp.distance_from_hr_meters, vp.distance_category,
@@ -373,6 +415,16 @@ router.post('/:caseRefOrEmpId/generate-report', authenticateAdmin, async (req, r
 
     if (!fullCaseData) {
       return res.status(404).json({ error: 'Case data not found for report generation.' });
+    }
+
+    if (isTeamLeader(req.user)) {
+      const isAssigned = (
+        fullCaseData.assigned_reviewer_id === req.user.id ||
+        fullCaseData.case_reviewer_id === req.user.id
+      );
+      if (!isAssigned) {
+        return res.status(403).json({ error: 'Access restricted: You cannot download reports for unassigned cases.' });
+      }
     }
 
     const report = await generateVerificationReportPDF(fullCaseData, req.user.full_name);

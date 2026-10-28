@@ -33,10 +33,12 @@ export function ImageValidationFeedback({
     );
   }
 
-  if (!validationResult) return null;
+  if (!validationResult || typeof validationResult !== 'object') return null;
+
+  const isValid = Boolean(validationResult.valid === true);
 
   // Validation Failed: Strict enforcement - No manual overrides allowed
-  if (!validationResult.valid) {
+  if (!isValid) {
     return (
       <div
         style={{

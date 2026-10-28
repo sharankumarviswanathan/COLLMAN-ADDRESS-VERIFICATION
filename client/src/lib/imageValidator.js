@@ -1,3 +1,5 @@
+import { api } from '../api/client';
+
 /**
  * Client-Side Real-Time Image Quality & Content Validator
  * Analyzes image clarity, blur (Laplacian variance), lighting, contrast,
@@ -162,18 +164,19 @@ async function detectFace(canvas) {
     }
   }
 
-  // 2. Geometric & Color Analysis: Scan Candidate Sectors (Left, Center, Right)
+  // 2. Geometric & Color Analysis: Scan Candidate Sectors (Left Half, Right Half, Center)
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const sectors = [
-    { name: 'center', x: Math.floor(w * 0.20), w: Math.floor(w * 0.60) },
-    { name: 'left',   x: Math.floor(w * 0.05), w: Math.floor(w * 0.55) },
-    { name: 'right',  x: Math.floor(w * 0.40), w: Math.floor(w * 0.55) }
+    { name: 'left',   x: Math.floor(w * 0.04), w: Math.floor(w * 0.45) },
+    { name: 'right',  x: Math.floor(w * 0.51), w: Math.floor(w * 0.45) },
+    { name: 'center', x: Math.floor(w * 0.20), w: Math.floor(w * 0.60) }
   ];
 
-  let foundFace = false;
+  let verifiedFaces = 0;
   let hairOnlyDetected = false;
   let partialFaceDetected = false;
   let maxConfidence = 0;
+  const sectorFaceStatus = { left: false, right: false, center: false };
 
   for (const sector of sectors) {
     const sx = sector.x;
@@ -238,26 +241,64 @@ async function detectFace(canvas) {
     // 1. Mid-face tier (eyes/cheeks/nose) MUST have healthy skin tone (>= 7.5%)
     // 2. At least 2 tiers have skin tone >= 5%
     // 3. Overall skin tone in candidate box is between 8% and 85%
-    if (t1Skin >= 0.075 && tiersWithSkin >= 2 && totalSkin >= 0.08 && totalSkin <= 0.85) {
-      foundFace = true;
+    // 4. Must possess facial feature contrast in mid-face (eyes, eyebrows, nostrils) — not a featureless arm or flat skin
+    let tier1SkinLumSum = 0;
+    let tier1SkinCount = 0;
+    for (let py = tierH; py < tierH * 2; py++) {
+      for (let px = 0; px < sw; px++) {
+        const idx = (py * sw + px) * 4;
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+        if (isSkinTone(r, g, b)) {
+          tier1SkinCount++;
+          tier1SkinLumSum += getLuminance(r, g, b);
+        }
+      }
+    }
+    const meanTier1SkinLum = tier1SkinCount > 0 ? tier1SkinLumSum / tier1SkinCount : 128;
+    let tier1DarkFeatureCount = 0;
+    for (let py = tierH; py < tierH * 2; py++) {
+      for (let px = 0; px < sw; px++) {
+        const idx = (py * sw + px) * 4;
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+        const lum = getLuminance(r, g, b);
+        if (lum < meanTier1SkinLum * 0.72) {
+          tier1DarkFeatureCount++;
+        }
+      }
+    }
+    const tier1FeatureRatio = tier1DarkFeatureCount / Math.max(1, tierTotalPixels[1]);
+    const hasFacialFeatures = tier1FeatureRatio >= 0.015 || (totalHair > 0.08 && t0Hair > 0.04);
+
+    if (t1Skin >= 0.075 && tiersWithSkin >= 2 && totalSkin >= 0.08 && totalSkin <= 0.85 && hasFacialFeatures) {
+      sectorFaceStatus[sector.name] = true;
       maxConfidence = Math.max(maxConfidence, 0.85);
-      break;
     }
   }
 
-  if (foundFace) {
-    return { detected: true, confidence: maxConfidence, count: 1 };
+  // Count distinct faces: Left and Right side-by-side yields 2 faces
+  if (sectorFaceStatus.left && sectorFaceStatus.right) {
+    verifiedFaces = 2;
+  } else if (sectorFaceStatus.left || sectorFaceStatus.right || sectorFaceStatus.center) {
+    verifiedFaces = 1;
+  }
+
+  if (verifiedFaces > 0) {
+    return { detected: true, confidence: maxConfidence, count: verifiedFaces };
   }
 
   if (hairOnlyDetected) {
-    return { detected: false, reason: 'hair_only', confidence: 0 };
+    return { detected: false, count: 0, reason: 'hair_only', confidence: 0 };
   }
 
   if (partialFaceDetected) {
-    return { detected: false, reason: 'partial_face', confidence: 0 };
+    return { detected: false, count: 0, reason: 'partial_face', confidence: 0 };
   }
 
-  return { detected: false, reason: 'no_face', confidence: 0 };
+  return { detected: false, count: 0, reason: 'no_face', confidence: 0 };
 }
 
 /**
@@ -344,10 +385,9 @@ function analyzeTextStrokeFeatures(canvas) {
   const globalCleanEdgeRatio = totalCleanSamplePoints > 0 ? totalCleanEdgePoints / totalCleanSamplePoints : 0;
 
   // Door number / sign detection:
-  // Requires clean localized stroke density in at least one non-hair cell >= 2.0%
-  // OR at least 2 non-hair cells with >= 1.8% density
-  // OR substantial clean edge points >= 90
-  const hasTextFeatures = (maxCellDensity >= 0.020) || (validTextCells >= 2) || (totalCleanEdgePoints >= 90);
+  // Requires clean localized stroke density in at least 2 non-hair cells >= 2.5%
+  // OR substantial clean edge points >= 250
+  const hasTextFeatures = (maxCellDensity >= 0.025 && validTextCells >= 2) || (totalCleanEdgePoints >= 250);
 
   return {
     textFeatureScore: Math.min(100, Math.round(maxCellDensity * 500)),
@@ -389,8 +429,8 @@ export async function validatePhotoInBrowser(dataUrl, photoType, hrAddress = '')
         const metrics = analyzeCanvasPixels(ctx, targetWidth, targetHeight);
 
         // 2. Face Detection
-        let faceResult = { detected: null };
-        if (photoType === 'selfie' || photoType === 'door_selfie' || photoType === 'building' || photoType === 'landmark' || photoType === 'street') {
+        let faceResult = { detected: null, count: 0 };
+        if (photoType === 'selfie' || photoType === 'door_selfie' || photoType === 'joint_selfie' || photoType === 'building' || photoType === 'landmark' || photoType === 'street') {
           faceResult = await detectFace(canvas);
         }
 
@@ -415,6 +455,7 @@ export async function validatePhotoInBrowser(dataUrl, photoType, hrAddress = '')
           metrics: {
             ...metrics,
             faceDetected: faceResult.detected,
+            faceCount: faceResult.count !== undefined ? faceResult.count : (faceResult.detected ? 1 : 0),
             faceReason: faceResult.reason || null,
             faceConfidence: faceResult.confidence || 0,
             hasTextFeatures: textFeatures.hasTextFeatures,
@@ -459,7 +500,8 @@ export async function validatePhotoInBrowser(dataUrl, photoType, hrAddress = '')
             street: 'Street Board',
             building: 'Full Building',
             door_selfie: 'Door Number Selfie',
-            selfie: 'Live Selfie'
+            selfie: 'Live Selfie',
+            joint_selfie: 'TL & Employee Joint Selfie'
           }[photoType] || 'Evidence photo';
 
           report.valid = false;
@@ -469,7 +511,26 @@ export async function validatePhotoInBrowser(dataUrl, photoType, hrAddress = '')
         }
 
         // MANDATORY CONTENT EVALUATION PER PHOTO TYPE
-        if (photoType === 'door_selfie') {
+        if (photoType === 'joint_selfie') {
+          const faceCount = faceResult.count !== undefined ? faceResult.count : (faceResult.detected ? 1 : 0);
+          if (faceCount < 2 || faceResult.detected !== true) {
+            report.valid = false;
+            const faceMsg = faceCount === 1
+              ? 'Only one face detected. Both TL and Employee required'
+              : (faceResult.reason === 'hair_only'
+                ? 'Hair-only captured. Both faces required'
+                : faceResult.reason === 'partial_face'
+                ? 'Partial face captured. Both full faces required'
+                : 'Both TL and Employee faces required');
+            report.checks.content = { passed: false, message: faceMsg };
+            report.error = faceCount === 1
+              ? 'Only one face detected. Both the Team Leader and the Employee must appear together in the photo, with both faces clearly visible.'
+              : 'Both Team Leader and Employee must appear together in the same photo with both faces clearly visible looking directly at the camera. If either face is missing or unclear, please retake.';
+            return resolve(report);
+          }
+          report.checks.content = { passed: true, message: 'Both TL and Employee faces clearly verified' };
+
+        } else if (photoType === 'door_selfie') {
           const facePassed = faceResult.detected === true;
           const textPassed = Boolean(textFeatures.hasTextFeatures);
 
@@ -588,5 +649,91 @@ export async function validatePhotoInBrowser(dataUrl, photoType, hrAddress = '')
 
     img.src = dataUrl;
   });
+}
+
+/**
+ * Unified AI & Multi-Criteria Validation Pipeline
+ * Combines immediate client-side visual pre-checks with backend AI & OCR analysis.
+ * Strictly guarantees that ONLY fully verified images receive valid: true.
+ *
+ * @param {string} dataUrl - Base64/DataURL image string
+ * @param {string} photoType - 'landmark' | 'street' | 'building' | 'door_selfie' | 'selfie'
+ * @param {string} hrAddress - Employee HR reference address
+ * @returns {Promise<Object>} Final validation report
+ */
+export async function validatePhotoWithAi(dataUrl, photoType, hrAddress = '') {
+  if (!dataUrl) {
+    return {
+      valid: false,
+      error: 'No image data captured. Please retake the photo.',
+      checks: {
+        clarity: { passed: false, message: 'Missing photo' },
+        lighting: { passed: false, message: 'Missing photo' },
+        visibility: { passed: false, message: 'Missing photo' },
+        content: { passed: false, message: 'Missing photo' }
+      }
+    };
+  }
+
+  // 1. Instant client-side visual analysis (blur, lighting, contrast, screen/document, face)
+  let localReport;
+  try {
+    localReport = await validatePhotoInBrowser(dataUrl, photoType, hrAddress);
+  } catch (localErr) {
+    console.warn('Local photo pre-check failed:', localErr);
+    return {
+      valid: false,
+      error: 'Unable to analyze photo. Please retake the photo.',
+      checks: {
+        clarity: { passed: false, message: 'Analysis failed' },
+        lighting: { passed: false, message: 'Analysis failed' },
+        visibility: { passed: false, message: 'Analysis failed' },
+        content: { passed: false, message: 'Unable to analyze photo' }
+      }
+    };
+  }
+
+  // If local quality check fails (blurry, dark, overexposed, washed out, or document on outdoor photo),
+  // reject immediately without waiting for server
+  if (!localReport || !localReport.valid) {
+    return localReport || {
+      valid: false,
+      error: 'Photo validation failed. Please retake the photo.',
+      checks: {
+        clarity: { passed: false, message: 'Check failed' },
+        lighting: { passed: false, message: 'Check failed' },
+        visibility: { passed: false, message: 'Check failed' },
+        content: { passed: false, message: 'Check failed' }
+      }
+    };
+  }
+
+  // 2. Comprehensive backend AI & OCR analysis
+  try {
+    const serverReport = await api.verify.validateImage(
+      dataUrl,
+      photoType,
+      hrAddress,
+      localReport.metrics || {}
+    );
+
+    if (serverReport && typeof serverReport === 'object' && typeof serverReport.valid === 'boolean') {
+      return serverReport;
+    }
+
+    throw new Error('Invalid validation payload received from server');
+  } catch (apiErr) {
+    console.warn('Backend validateImage call failed:', apiErr);
+    return {
+      valid: false,
+      error: apiErr?.message || 'Unable to analyze photo. Please retake the photo.',
+      checks: {
+        clarity: { passed: false, message: 'Analysis failed' },
+        lighting: { passed: false, message: 'Analysis failed' },
+        visibility: { passed: false, message: 'Analysis failed' },
+        content: { passed: false, message: 'Unable to analyze photo' }
+      }
+    };
+  }
 }
 

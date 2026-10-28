@@ -86,7 +86,7 @@ export function StepDetails() {
                 Department
               </div>
               <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#1E1B4B' }}>
-                {employee.department}
+                {employee.department || 'Operations'}
               </div>
             </div>
 
@@ -95,7 +95,28 @@ export function StepDetails() {
                 Branch
               </div>
               <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#1E1B4B' }}>
-                {employee.branch}
+                {employee.branch || 'Head Office'}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', paddingTop: '4px', borderTop: '1px dashed #CBD5E1' }}>
+            <div>
+              <div style={{ fontSize: '0.78rem', textTransform: 'uppercase', color: '#64748B', fontWeight: 700 }}>
+                Designation
+              </div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#1E1B4B' }}>
+                {employee.designation || 'Verification Agent'}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: '0.78rem', textTransform: 'uppercase', color: '#64748B', fontWeight: 700 }}>
+                Assigned Team Leader
+              </div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#047857' }}>
+                {employee.assignedTlName || employee.teamLeader || 'Assigned'}
+                {employee.assignedTlId ? ` (${employee.assignedTlId})` : ''}
               </div>
             </div>
           </div>

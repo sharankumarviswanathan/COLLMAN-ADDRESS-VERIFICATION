@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useVerification } from '../../context/VerificationContext';
 import { api } from '../../api/client';
 import { capturePhotoLocation } from '../../lib/photoLocation';
-import { validatePhotoInBrowser } from '../../lib/imageValidator';
+import { validatePhotoWithAi } from '../../lib/imageValidator';
 import { getCameraStream, stopMediaStream } from '../../lib/cameraHelper';
 import { ImageValidationFeedback } from './ImageValidationFeedback';
 import {
@@ -52,40 +52,47 @@ export function StepStreetPhoto() {
 
   // Analyze any preview image from scratch
   useEffect(() => {
+    let isMounted = true;
     if (previewImg && !validationResult && !validating && !cameraActive) {
       setValidating(true);
-      validatePhotoInBrowser(previewImg, 'street', employee?.hrAddress || '')
+      setErrorMsg('');
+      validatePhotoWithAi(previewImg, 'street', employee?.hrAddress || '')
         .then((val) => {
-          if (!val.valid) {
-            setValidationResult(val);
-            setErrorMsg(val.error || 'Street board not detected or street name is not readable. Please retake the photo.');
-            return;
-          }
-          return api.verify.validateImage(previewImg, 'street', employee?.hrAddress || '', val.metrics || {})
-            .then((serverVal) => {
-              setValidationResult(serverVal);
-              if (!serverVal.valid) {
-                setErrorMsg(serverVal.error || 'Street board not detected or street name is not readable. Please retake the photo.');
-              }
-            });
-        })
-        .catch(() => {
-          setValidationResult({
+          if (!isMounted) return;
+          const safeVal = val && typeof val === 'object' ? val : {
             valid: false,
-            error: 'Street board not detected or street name is not readable. Please retake the photo.',
+            error: 'Unable to analyze photo. Please retake the photo.',
             checks: {
               clarity: { passed: false, message: 'Check failed' },
               lighting: { passed: false, message: 'Check failed' },
               visibility: { passed: false, message: 'Check failed' },
-              content: { passed: false, message: 'Street board not detected or street name is not readable' }
+              content: { passed: false, message: 'Check failed' }
+            }
+          };
+          setValidationResult(safeVal);
+          if (!safeVal.valid) {
+            setErrorMsg(safeVal.error || 'Street board not detected or street name is not readable. Please retake the photo.');
+          }
+        })
+        .catch(() => {
+          if (!isMounted) return;
+          setValidationResult({
+            valid: false,
+            error: 'Unable to analyze photo. Please retake the photo.',
+            checks: {
+              clarity: { passed: false, message: 'Check failed' },
+              lighting: { passed: false, message: 'Check failed' },
+              visibility: { passed: false, message: 'Check failed' },
+              content: { passed: false, message: 'Check failed' }
             }
           });
-          setErrorMsg('Street board not detected or street name is not readable. Please retake the photo.');
+          setErrorMsg('Unable to analyze photo. Please retake the photo.');
         })
         .finally(() => {
-          setValidating(false);
+          if (isMounted) setValidating(false);
         });
     }
+    return () => { isMounted = false; };
   }, [previewImg, cameraActive, employee?.hrAddress]);
 
   // When cameraActive changes, ensure the video srcObject is attached and playing
@@ -166,6 +173,8 @@ export function StepStreetPhoto() {
 
     stopCamera();
     setPreviewImg(dataUrl);
+    setValidationResult(null);
+    setErrorMsg('');
 
     // 1. Capture independent live GPS fix at the exact moment street board photo is snapped
     const loc = await capturePhotoLocation();
@@ -173,55 +182,43 @@ export function StepStreetPhoto() {
 
     // 2. Perform automated quality and OCR validation on snapshot
     setValidating(true);
-    setErrorMsg('');
     try {
-      // Step A: Immediate browser pre-check (clarity, lighting, contrast, face/person rejection)
-      const localVal = await validatePhotoInBrowser(dataUrl, 'street', employee?.hrAddress || '');
-      if (!localVal.valid) {
-        setValidationResult(localVal);
-        setErrorMsg(localVal.error || 'Street board not detected or street name is not readable. Please retake the photo.');
-        setValidating(false);
-        return;
-      }
-
-      // Step B: Backend OCR text extraction & street board verification
-      const serverVal = await api.verify.validateImage(
-        dataUrl,
-        'street',
-        employee?.hrAddress || '',
-        localVal.metrics || {}
-      );
-
-      if (!serverVal.valid) {
-        setValidationResult(serverVal);
-        setErrorMsg(serverVal.error || 'Street board not detected or street name is not readable. Please retake the photo.');
-      } else {
-        setValidationResult(serverVal);
-        setErrorMsg('');
+      const val = await validatePhotoWithAi(dataUrl, 'street', employee?.hrAddress || '');
+      const safeVal = val && typeof val === 'object' ? val : {
+        valid: false,
+        error: 'Unable to analyze photo. Please retake the photo.',
+        checks: {
+          clarity: { passed: false, message: 'Check failed' },
+          lighting: { passed: false, message: 'Check failed' },
+          visibility: { passed: false, message: 'Check failed' },
+          content: { passed: false, message: 'Check failed' }
+        }
+      };
+      setValidationResult(safeVal);
+      if (!safeVal.valid) {
+        setErrorMsg(safeVal.error || 'Street board not detected or street name is not readable. Please retake the photo.');
       }
     } catch (vErr) {
       console.error('Street board validation error:', vErr);
       const failReport = {
         valid: false,
-        error: 'Street board not detected or street name is not readable. Please retake the photo.',
+        error: 'Unable to analyze photo. Please retake the photo.',
         checks: {
-          clarity: { passed: true, message: 'Sharp' },
-          lighting: { passed: true, message: 'Balanced' },
-          visibility: { passed: true, message: 'Clear' },
-          content: { passed: false, message: 'Street board not detected or street name is not readable' }
+          clarity: { passed: false, message: 'Check failed' },
+          lighting: { passed: false, message: 'Check failed' },
+          visibility: { passed: false, message: 'Check failed' },
+          content: { passed: false, message: 'Check failed' }
         }
       };
       setValidationResult(failReport);
-      setErrorMsg('Street board not detected or street name is not readable. Please retake the photo.');
+      setErrorMsg('Unable to analyze photo. Please retake the photo.');
     } finally {
       setValidating(false);
     }
   }
 
   async function handleConfirmPhoto() {
-    if (!previewImg) return;
-
-    if (!validationResult || !validationResult.valid) {
+    if (!previewImg || !validationResult || !validationResult.valid || validating) {
       setErrorMsg(validationResult?.error || 'Street board not detected or street name is not readable. Please retake the photo.');
       return;
     }
@@ -246,11 +243,24 @@ export function StepStreetPhoto() {
       nextStep();
     } catch (err) {
       console.error('Street board photo save error:', err);
-      setErrorMsg(err.message || 'Street board not detected or street name is not readable. Please retake the photo.');
+      const failReport = {
+        valid: false,
+        error: err.message || 'Failed to save street photo. Please retake the photo.',
+        checks: {
+          clarity: { passed: false, message: 'Save failed' },
+          lighting: { passed: false, message: 'Save failed' },
+          visibility: { passed: false, message: 'Save failed' },
+          content: { passed: false, message: err.message || 'Validation error' }
+        }
+      };
+      setValidationResult(failReport);
+      setErrorMsg(err.message || 'Failed to save street photo. Please retake the photo.');
     } finally {
       setLoading(false);
     }
   }
+
+  const canProceed = Boolean(previewImg && validationResult && validationResult.valid === true && !validating && !loading);
 
   return (
     <div className="emp-card">
@@ -411,7 +421,28 @@ export function StepStreetPhoto() {
       {/* Preview Confirmation Controls */}
       {previewImg && !cameraActive && (
         <div style={{ marginBottom: '16px' }}>
-          {validationResult && !validationResult.valid ? (
+          {validating ? (
+            <button
+              type="button"
+              className="btn btn-secondary btn-large"
+              style={{
+                width: '100%',
+                opacity: 0.8,
+                cursor: 'not-allowed',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                backgroundColor: '#F0F9FF',
+                borderColor: '#BAE6FD',
+                color: '#0369A1'
+              }}
+              disabled
+            >
+              <RefreshCw size={18} className="animate-spin" style={{ animation: 'spin 1s linear infinite' }} />
+              <span style={{ fontWeight: 600 }}>Analyzing Photo Quality & Content...</span>
+            </button>
+          ) : validationResult && !validationResult.valid ? (
             <button
               id="btn-retake-street-only"
               type="button"
@@ -445,11 +476,11 @@ export function StepStreetPhoto() {
                 className="btn btn-success btn-large"
                 style={{
                   flex: 1,
-                  opacity: (previewImg && validationResult?.valid && !validating) ? 1 : 0.5,
-                  cursor: (previewImg && validationResult?.valid && !validating) ? 'pointer' : 'not-allowed'
+                  opacity: canProceed ? 1 : 0.5,
+                  cursor: canProceed ? 'pointer' : 'not-allowed'
                 }}
                 onClick={handleConfirmPhoto}
-                disabled={!previewImg || !validationResult?.valid || validating || loading}
+                disabled={!canProceed || loading}
               >
                 <CheckCircle2 size={20} />
                 <span>{loading ? 'Saving...' : 'Use This Photo'}</span>
@@ -474,7 +505,7 @@ export function StepStreetPhoto() {
         </div>
       )}
 
-      {errorMsg && (
+      {errorMsg && (!validationResult || validationResult.valid) && (
         <div
           style={{
             backgroundColor: 'var(--danger-light)',

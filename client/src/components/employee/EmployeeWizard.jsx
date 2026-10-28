@@ -12,6 +12,7 @@ import { StepDoorSelfie } from './StepDoorSelfie';
 import { StepStreetPhoto } from './StepStreetPhoto';
 import { StepLandmarkPhoto } from './StepLandmarkPhoto';
 import { StepAddressProof } from './StepAddressProof';
+import { StepJointSelfie } from './StepJointSelfie';
 import { StepDeclarationReview } from './StepDeclarationReview';
 import { StepSuccess } from './StepSuccess';
 import { ShieldCheck, LogIn } from 'lucide-react';
@@ -20,7 +21,7 @@ import { Link } from 'react-router-dom';
 export function EmployeeWizard() {
   const { step, employee } = useVerification();
 
-  // Wizard Step Labels (Step 2 to 12 correspond to actual verification steps 1 to 11)
+  // Wizard Step Labels (Step 2 to 13 correspond to actual verification steps 1 to 12)
   const stepLabels = {
     2: 'Confirm Details',
     3: 'Confirm Address',
@@ -32,11 +33,12 @@ export function EmployeeWizard() {
     9: 'Door Number Selfie',
     10: 'Live Selfie',
     11: 'Address Proof',
-    12: 'Review & Submit'
+    12: 'TL & Employee Joint Selfie',
+    13: 'Review & Submit'
   };
 
-  const currentStepNum = step >= 2 && step <= 12 ? step - 1 : 0;
-  const totalSteps = 11;
+  const currentStepNum = step >= 2 && step <= 13 ? step - 1 : 0;
+  const totalSteps = 12;
   const progressPercent = currentStepNum > 0 ? (currentStepNum / totalSteps) * 100 : 0;
 
   return (
@@ -72,8 +74,8 @@ export function EmployeeWizard() {
 
       {/* Main Form Body */}
       <main className="emp-body">
-        {/* Progress Bar (Visible from Step 2 to 12) */}
-        {step >= 2 && step <= 12 && (
+        {/* Progress Bar (Visible from Step 2 to 13) */}
+        {step >= 2 && step <= 13 && (
           <div className="emp-progress-bar-container">
             <div className="emp-progress-meta">
               <span>Step {currentStepNum} of {totalSteps}: {stepLabels[step]}</span>
@@ -101,8 +103,9 @@ export function EmployeeWizard() {
         {step === 9 && <StepDoorSelfie />}
         {step === 10 && <StepSelfie />}
         {step === 11 && <StepAddressProof />}
-        {step === 12 && <StepDeclarationReview />}
-        {step === 13 && <StepSuccess />}
+        {step === 12 && <StepJointSelfie />}
+        {step === 13 && <StepDeclarationReview />}
+        {step === 14 && <StepSuccess />}
       </main>
     </div>
   );

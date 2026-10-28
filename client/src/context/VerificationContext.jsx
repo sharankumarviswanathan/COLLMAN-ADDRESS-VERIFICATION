@@ -4,6 +4,7 @@ const VerificationContext = createContext(null);
 
 export function VerificationProvider({ children }) {
   const [step, setStep] = useState(0); // 0: Welcome, 1: Emp ID entry, 2..9: Steps, 10: Success
+  const [tl, setTl] = useState(null);
   const [employee, setEmployee] = useState(null);
   const [progress, setProgress] = useState({
     detailsConfirmed: false,
@@ -36,6 +37,11 @@ export function VerificationProvider({ children }) {
     doorPhotoCaptured: false,
     doorPhotoUrl: null,
     doorPhotoCoords: null,
+    jointSelfieCaptured: false,
+    jointSelfieUrl: null,
+    jointSelfieCoords: null,
+    jointSelfieTlId: null,
+    jointSelfieTlName: null,
     addressProofUploaded: false,
     documentType: '',
     documentOriginalName: '',
@@ -58,6 +64,7 @@ export function VerificationProvider({ children }) {
 
   const resetSession = () => {
     sessionStorage.removeItem('collman_emp_session');
+    setTl(null);
     setEmployee(null);
     setProgress({
       detailsConfirmed: false,
@@ -90,6 +97,11 @@ export function VerificationProvider({ children }) {
       doorPhotoCaptured: false,
       doorPhotoUrl: null,
       doorPhotoCoords: null,
+      jointSelfieCaptured: false,
+      jointSelfieUrl: null,
+      jointSelfieCoords: null,
+      jointSelfieTlId: null,
+      jointSelfieTlName: null,
       addressProofUploaded: false,
       documentType: '',
       documentOriginalName: '',
@@ -108,6 +120,8 @@ export function VerificationProvider({ children }) {
       value={{
         step,
         setStep,
+        tl,
+        setTl,
         employee,
         setEmployee,
         progress,

@@ -446,7 +446,7 @@ export function StepAddressProof() {
     <div className="emp-card">
       <h2 className="emp-step-title">Upload Address Proof</h2>
       <p className="emp-step-instruction">
-        Please provide both the <strong>FRONT</strong> and <strong>BACK</strong> sides of your address proof document. The system will automatically verify document quality, detect document type, and read the address in English or Tamil.
+        Please provide both the <strong>FRONT</strong> and <strong>BACK</strong> sides of your address proof document. The system supports all available Indian languages (English, Hindi, Tamil, Telugu, Kannada, Malayalam) and automatically detects mixed-language documents.
       </p>
 
       {/* 1. Document Type Selector */}
@@ -1056,7 +1056,7 @@ export function StepAddressProof() {
           <RefreshCw size={20} className="spin" />
           <span>
             {validatingSide === 'both'
-              ? 'Analyzing Document Quality, English/Tamil OCR & Document Type...'
+              ? 'Analyzing Document Quality, Multi-Language OCR & Document Type...'
               : `Analyzing ${validatingSide === 'front' ? 'Front' : 'Back'} side quality & text...`}
           </span>
         </div>
@@ -1252,6 +1252,24 @@ export function StepAddressProof() {
                   <span>Overall Result:</span>
                   <span>{combinedValidation.addressMatch?.overallResult || 'MATCHED'}</span>
                 </div>
+
+                {combinedValidation.languageSummary && combinedValidation.languageSummary !== 'Unknown' && (
+                  <div style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    padding: '4px 10px',
+                    borderRadius: '4px',
+                    backgroundColor: '#EFF6FF',
+                    color: '#1D4ED8',
+                    border: '1px solid #BFDBFE'
+                  }}>
+                    <span>🌐 Language:</span>
+                    <span>{combinedValidation.languageSummary}</span>
+                  </div>
+                )}
               </div>
             </div>
           )}

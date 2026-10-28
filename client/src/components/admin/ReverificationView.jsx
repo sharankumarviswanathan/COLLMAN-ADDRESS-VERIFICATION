@@ -14,8 +14,8 @@ import {
 
 export function ReverificationView() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const isAdmin = ['Super Admin', 'HR/Admin'].includes(user?.role);
+  const { user, hasPermission, hasAnyPermission } = useAuth();
+  const isAdmin = user?.role === 'Super Admin' || ['Super Admin', 'HR/Admin'].includes(user?.role);
 
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -254,7 +254,7 @@ export function ReverificationView() {
                           <span>Inspect Case</span>
                         </button>
 
-                        {isAdmin && (
+                        {hasPermission('delete_cases') && (
                           <button
                             id={`btn-delete-reverify-case-${item.employee_id}`}
                             className="btn btn-secondary btn-sm"

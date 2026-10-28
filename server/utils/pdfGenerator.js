@@ -147,6 +147,12 @@ function getDistanceAuditRule(ruleKey, distanceMeters) {
       else if (d <= 15) status = 'ORANGE';
       else status = 'RED';
       break;
+    case 'joint_selfie':
+      allowed = '0 - 15 m';
+      if (d <= 15) status = 'GREEN';
+      else if (d <= 25) status = 'ORANGE';
+      else status = 'RED';
+      break;
     case 'landmark-to-street':
       allowed = '0 - 400 m';
       if (d <= 400) status = 'GREEN';
@@ -169,6 +175,12 @@ function getDistanceAuditRule(ruleKey, distanceMeters) {
       allowed = '0 - 10 m';
       if (d <= 10) status = 'GREEN';
       else if (d <= 15) status = 'ORANGE';
+      else status = 'RED';
+      break;
+    case 'selfie-to-joint':
+      allowed = '0 - 15 m';
+      if (d <= 15) status = 'GREEN';
+      else if (d <= 25) status = 'ORANGE';
       else status = 'RED';
       break;
     default:
@@ -697,6 +709,9 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
         let capturedAt = prog[`${prefix}_captured_at`] || ev?.captured_at;
         let validationStatus = ev?.validation_status || (prog[`${prefix}_captured`] ? 'PASSED' : 'PENDING');
 
+        let tlId = prog[`${prefix}_tl_id`] || ev?.tl_id || data.team_leader || null;
+        let tlName = prog[`${prefix}_tl_name`] || ev?.tl_name || data.team_leader || null;
+
         let localPath = null;
         if (photoPath) {
           if (fs.existsSync(photoPath)) {
@@ -725,7 +740,9 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
           acc: acc ? `±${Math.round(parseFloat(acc))} m` : 'N/A',
           capturedAt: formatDateTime(capturedAt),
           status: validationStatus || 'PASSED',
-          distFromLive: distFromLive !== null ? `${distFromLive} m` : '0 m'
+          distFromLive: distFromLive !== null ? `${distFromLive} m` : '0 m',
+          tlId,
+          tlName
         };
       }
 
@@ -734,7 +751,8 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
         { title: 'Street Board', ...findEvidence('street_photo', 'street_photo') },
         { title: 'Full Building', ...findEvidence('house_photo', 'house_photo') },
         { title: 'Door Number Selfie', ...findEvidence('door_photo', 'door_photo') },
-        { title: 'Live Selfie', ...findEvidence('selfie', 'selfie') }
+        { title: 'Live Selfie', ...findEvidence('selfie', 'selfie') },
+        { title: 'TL & Employee Joint Selfie', ...findEvidence('joint_selfie', 'joint_selfie') }
       ];
 
       // 4. Address Proof Document Verification (OCR & Match Audit)
@@ -894,7 +912,7 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
       drawPageWatermark(doc);
 
       yPos = 35;
-      yPos = drawSectionBanner(doc, '5. Photo Evidence (All 5 Geotagged Evidence Photographs)', yPos);
+      yPos = drawSectionBanner(doc, '5. Photo Evidence (All 6 Geotagged Evidence Photographs)', yPos);
 
       doc.fillColor(C.textSecondary)
          .fontSize(7)
@@ -902,18 +920,18 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
          .text('Physical inspection photographic evidence captured during verification. Embedded directly from verified audit records with independent coordinates.', 38, yPos - 2, { width: 520, lineBreak: false });
       yPos += 11;
 
-      // 3-Column Photo Evidence Box Helper (Expanded & Beautifully Proportioned)
+      // 3-Column Photo Evidence Box Helper
       function renderCompactPhotoCard(doc, card, x, y, w, h) {
         doc.roundedRect(x, y, w, h, 3).fillAndStroke(C.cardBg, C.border);
 
         // Header Title Bar
-        doc.roundedRect(x, y, w, 16, 3).fill(C.primary);
-        doc.rect(x, y + 8, w, 8).fill(C.primary);
-        doc.fillColor(C.white).fontSize(7).font('Helvetica-Bold').text(card.title, x + 6, y + 4.5, { width: w - 12, ellipsis: true, lineBreak: false });
+        doc.roundedRect(x, y, w, 15, 3).fill(C.primary);
+        doc.rect(x, y + 7, w, 8).fill(C.primary);
+        doc.fillColor(C.white).fontSize(6.8).font('Helvetica-Bold').text(card.title, x + 5, y + 4, { width: w - 10, ellipsis: true, lineBreak: false });
 
-        // Photo Viewport (Fits edge-to-edge with 36% larger area)
-        const photoY = y + 18;
-        const photoH = 136;
+        // Photo Viewport
+        const photoY = y + 17;
+        const photoH = 120;
         const photoW = w - 8;
         const photoX = x + 4;
 
@@ -939,76 +957,60 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
 
         if (!photoRendered) {
           doc.rect(photoX, photoY, photoW, photoH).stroke(C.borderLight);
-          doc.fillColor(C.textMuted).fontSize(7).font('Helvetica').text('Photo Not Available / Pending', photoX, photoY + 60, { width: photoW, align: 'center', lineBreak: false });
+          doc.fillColor(C.textMuted).fontSize(6.8).font('Helvetica').text('Photo Not Available / Pending', photoX, photoY + 52, { width: photoW, align: 'center', lineBreak: false });
         }
 
-        // Metadata box underneath photo (48 pt)
-        const metaY = photoY + photoH + 4;
-        doc.rect(photoX, metaY, photoW, 48).fillAndStroke(C.white, C.borderLight);
+        // Metadata box underneath photo
+        const metaY = photoY + photoH + 3;
+        const metaH = h - (photoY + photoH + 3) - 3;
+        doc.rect(photoX, metaY, photoW, metaH).fillAndStroke(C.white, C.borderLight);
 
         const latLngStr = (card.lat && card.lng) ? `${card.lat}, ${card.lng}` : 'Not Available';
-        doc.fillColor(C.textMuted).fontSize(6).font('Helvetica-Bold').text('LAT / LNG:', photoX + 3, metaY + 3.5, { lineBreak: false });
-        doc.fillColor(C.textMain).fontSize(6).font('Helvetica').text(latLngStr, photoX + 38, metaY + 3.5, { width: photoW - 41, ellipsis: true, lineBreak: false });
+        doc.fillColor(C.textMuted).fontSize(5.8).font('Helvetica-Bold').text('LAT / LNG:', photoX + 3, metaY + 3.5, { lineBreak: false });
+        doc.fillColor(C.textMain).fontSize(5.8).font('Helvetica').text(latLngStr, photoX + 38, metaY + 3.5, { width: photoW - 41, ellipsis: true, lineBreak: false });
 
-        doc.fillColor(C.textMuted).fontSize(6).font('Helvetica-Bold').text('ACCURACY:', photoX + 3, metaY + 14, { lineBreak: false });
-        doc.fillColor(C.textMain).fontSize(6).font('Helvetica').text(card.acc, photoX + 38, metaY + 14, { lineBreak: false });
+        doc.fillColor(C.textMuted).fontSize(5.8).font('Helvetica-Bold').text('ACCURACY:', photoX + 3, metaY + 13.5, { lineBreak: false });
+        doc.fillColor(C.textMain).fontSize(5.8).font('Helvetica').text(card.acc, photoX + 38, metaY + 13.5, { lineBreak: false });
 
-        doc.fillColor(C.textMuted).fontSize(6).font('Helvetica-Bold').text('TIME:', photoX + 3, metaY + 24.5, { lineBreak: false });
-        doc.fillColor(C.textMain).fontSize(5.8).font('Helvetica').text(card.capturedAt, photoX + 38, metaY + 24.5, { width: photoW - 41, ellipsis: true, lineBreak: false });
+        doc.fillColor(C.textMuted).fontSize(5.8).font('Helvetica-Bold').text('TIME:', photoX + 3, metaY + 23.5, { lineBreak: false });
+        doc.fillColor(C.textMain).fontSize(5.6).font('Helvetica').text(card.capturedAt, photoX + 38, metaY + 23.5, { width: photoW - 41, ellipsis: true, lineBreak: false });
 
-        doc.fillColor(C.textMuted).fontSize(6).font('Helvetica-Bold').text('LIVE DIST:', photoX + 3, metaY + 35, { lineBreak: false });
-        doc.fillColor(C.textMain).fontSize(6).font('Helvetica').text(`${card.distFromLive} (from Live)`, photoX + 38, metaY + 35, { width: photoW - 41, ellipsis: true, lineBreak: false });
+        if (card.tlName) {
+          doc.fillColor(C.textMuted).fontSize(5.8).font('Helvetica-Bold').text('TL AUTH:', photoX + 3, metaY + 33.5, { lineBreak: false });
+          doc.fillColor('#4338CA').fontSize(5.8).font('Helvetica-Bold').text(`${card.tlName} ${card.tlId && card.tlId !== card.tlName ? '(' + card.tlId + ')' : ''}`, photoX + 38, metaY + 33.5, { width: photoW - 41, ellipsis: true, lineBreak: false });
+
+          doc.fillColor(C.textMuted).fontSize(5.8).font('Helvetica-Bold').text('LIVE DIST:', photoX + 3, metaY + 43.5, { lineBreak: false });
+          doc.fillColor(C.textMain).fontSize(5.8).font('Helvetica').text(`${card.distFromLive} (from Live)`, photoX + 38, metaY + 43.5, { width: photoW - 41, ellipsis: true, lineBreak: false });
+        } else {
+          doc.fillColor(C.textMuted).fontSize(5.8).font('Helvetica-Bold').text('LIVE DIST:', photoX + 3, metaY + 33.5, { lineBreak: false });
+          doc.fillColor(C.textMain).fontSize(5.8).font('Helvetica').text(`${card.distFromLive} (from Live)`, photoX + 38, metaY + 33.5, { width: photoW - 41, ellipsis: true, lineBreak: false });
+        }
 
         const statusStyle = card.status === 'PASSED' ? 'GREEN' : card.status === 'FAILED' ? 'RED' : 'GRAY';
-        drawBadgePill(doc, card.status, photoX + photoW - 48, metaY + 12, 45, 10, statusStyle);
+        drawBadgePill(doc, card.status, photoX + photoW - 48, metaY + 11, 45, 10, statusStyle);
       }
 
       const pCardW = 169;
-      const pCardH = 210;
+      const pCardH = 196;
 
       // Row 1: Landmark, Street Board, Full Building
       renderCompactPhotoCard(doc, { title: '1. Nearby Landmark', ...photoCards[0] }, 36, yPos, pCardW, pCardH);
       renderCompactPhotoCard(doc, { title: '2. Street Board', ...photoCards[1] }, 213, yPos, pCardW, pCardH);
       renderCompactPhotoCard(doc, { title: '3. Full Building', ...photoCards[2] }, 390, yPos, pCardW, pCardH);
-      yPos += pCardH + 6;
+      yPos += pCardH + 5;
 
-      // Row 2: Door Number Selfie, Live Selfie, and Integrity Seal Card
+      // Row 2: Door Number Selfie, Live Selfie, TL & Employee Joint Selfie
       renderCompactPhotoCard(doc, { title: '4. Door Number Selfie', ...photoCards[3] }, 36, yPos, pCardW, pCardH);
       renderCompactPhotoCard(doc, { title: '5. Live Selfie', ...photoCards[4] }, 213, yPos, pCardW, pCardH);
+      renderCompactPhotoCard(doc, { title: '6. TL & Employee Joint Selfie', ...photoCards[5] }, 390, yPos, pCardW, pCardH);
+      yPos += pCardH + 6;
 
-      // Card 6: Photo Evidence Integrity & Compliance Card (210 pt height)
-      const auditBoxX = 390;
-      doc.roundedRect(auditBoxX, yPos, pCardW, pCardH, 3).fillAndStroke(C.cardBg, C.border);
-      doc.roundedRect(auditBoxX, yPos, pCardW, 16, 3).fill(C.accent);
-      doc.rect(auditBoxX, yPos + 8, pCardW, 8).fill(C.accent);
-      doc.fillColor(C.white).fontSize(7).font('Helvetica-Bold').text('EVIDENCE INTEGRITY AUDIT', auditBoxX + 6, yPos + 4.5, { lineBreak: false });
-
-      let stdY = yPos + 22;
-      doc.fillColor(C.textMain).fontSize(7).font('Helvetica-Bold').text('Multi-Photo Verification Standards:', auditBoxX + 6, stdY, { lineBreak: false });
-      stdY += 14;
-
-      const standards = [
-        '[OK] Strict AI Content Validation applied',
-        '[OK] Independent GPS coordinates verified',
-        '[OK] Street board text detected via OCR',
-        '[OK] Door number & face validated',
-        '[OK] Facial biometric matched to Master',
-        '[OK] Zero manual bypass allowed',
-        '[OK] Immutable encrypted file storage'
-      ];
-
-      standards.forEach(std => {
-        doc.fillColor(C.textSecondary).fontSize(6.4).font('Helvetica').text(std, auditBoxX + 6, stdY, { width: pCardW - 12, lineBreak: false });
-        stdY += 13.5;
-      });
-
-      // Mini Seal inside Card 6
-      doc.rect(auditBoxX + 6, yPos + pCardH - 48, pCardW - 12, 42).fillAndStroke(C.white, C.borderLight);
-      doc.fillColor(C.primary).fontSize(7).font('Helvetica-Bold').text('SECURITY & COMPLIANCE SEAL', auditBoxX + 10, yPos + pCardH - 44, { lineBreak: false });
-      doc.fillColor(C.textMuted).fontSize(6.2).font('Helvetica').text(`Case Ref: ${refNo}`, auditBoxX + 10, yPos + pCardH - 32, { lineBreak: false });
-      doc.fillColor(C.success).fontSize(6.5).font('Helvetica-Bold').text('ALL 5 EVIDENCE CHECKS PASSED', auditBoxX + 10, yPos + pCardH - 20, { lineBreak: false });
-
-      yPos += pCardH + 8;
+      // Evidence Integrity & Verification Standards Strip
+      doc.rect(36, yPos, 523, 20).fillAndStroke(C.cardBg, C.border);
+      doc.rect(36, yPos, 3.5, 20).fill(C.accent);
+      doc.fillColor(C.accent).fontSize(6.5).font('Helvetica-Bold').text('EVIDENCE INTEGRITY AUDIT:', 44, yPos + 3.5, { lineBreak: false });
+      doc.fillColor(C.textSecondary).fontSize(5.8).font('Helvetica').text('Strict AI Content Validation • Dual Face Presence Verified for Joint Selfie • Zero Manual Gallery Upload Allowed • Cryptographic Geolocation Fixes Recorded', 44, yPos + 11.5, { width: 508, lineBreak: false });
+      yPos += 24;
 
       // 6. Photo Distance Audit (Live & Consecutive Proximity Matrix)
       yPos = drawSectionBanner(doc, '6. Photo Distance Audit (Live & Consecutive Proximity Matrix)', yPos);
@@ -1032,7 +1034,8 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
         { key: 'street', label: 'Employee Live -> Street Board', dist: calculateDistanceMeters(data.latitude, data.longitude, photoCards[1].lat, photoCards[1].lng), fromCoord: liveCoordText, toCoord: (photoCards[1].lat && photoCards[1].lng) ? `${photoCards[1].lat}, ${photoCards[1].lng}` : 'Not Captured' },
         { key: 'house', label: 'Employee Live -> Full Building', dist: calculateDistanceMeters(data.latitude, data.longitude, photoCards[2].lat, photoCards[2].lng), fromCoord: liveCoordText, toCoord: (photoCards[2].lat && photoCards[2].lng) ? `${photoCards[2].lat}, ${photoCards[2].lng}` : 'Not Captured' },
         { key: 'door', label: 'Employee Live -> Door Number Selfie', dist: calculateDistanceMeters(data.latitude, data.longitude, photoCards[3].lat, photoCards[3].lng), fromCoord: liveCoordText, toCoord: (photoCards[3].lat && photoCards[3].lng) ? `${photoCards[3].lat}, ${photoCards[3].lng}` : 'Not Captured' },
-        { key: 'selfie', label: 'Employee Live -> Live Selfie', dist: calculateDistanceMeters(data.latitude, data.longitude, photoCards[4].lat, photoCards[4].lng), fromCoord: liveCoordText, toCoord: (photoCards[4].lat && photoCards[4].lng) ? `${photoCards[4].lat}, ${photoCards[4].lng}` : 'Not Captured' }
+        { key: 'selfie', label: 'Employee Live -> Live Selfie', dist: calculateDistanceMeters(data.latitude, data.longitude, photoCards[4].lat, photoCards[4].lng), fromCoord: liveCoordText, toCoord: (photoCards[4].lat && photoCards[4].lng) ? `${photoCards[4].lat}, ${photoCards[4].lng}` : 'Not Captured' },
+        { key: 'joint_selfie', label: 'Employee Live -> TL & Emp Joint Selfie', dist: calculateDistanceMeters(data.latitude, data.longitude, photoCards[5].lat, photoCards[5].lng), fromCoord: liveCoordText, toCoord: (photoCards[5].lat && photoCards[5].lng) ? `${photoCards[5].lat}, ${photoCards[5].lng}` : 'Not Captured' }
       ];
 
       liveToPhotoComparisons.forEach((item, idx) => {
@@ -1040,14 +1043,14 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
         const distStr = item.dist !== null ? `${item.dist} m` : 'Not Available';
         const isEven = idx % 2 === 0;
 
-        doc.rect(36, yPos, 523, 15).fillAndStroke(isEven ? C.white : C.cardBg, C.borderLight);
-        doc.fillColor(C.textMain).fontSize(6.5).font('Helvetica-Bold').text(item.label, 42, yPos + 4, { width: 126, lineBreak: false });
-        doc.fillColor(C.textSecondary).fontSize(6.3).font('Helvetica').text(item.fromCoord, 172, yPos + 4, { width: 94, lineBreak: false });
-        doc.fillColor(C.primary).fontSize(6.3).font('Helvetica').text(item.toCoord, 270, yPos + 4, { width: 94, lineBreak: false });
-        doc.fillColor(C.textMain).fontSize(7.5).font('Helvetica-Bold').text(distStr, 368, yPos + 3.5, { width: 42, lineBreak: false });
-        doc.fillColor(C.textMuted).fontSize(6.8).font('Helvetica').text(rule.allowed, 414, yPos + 4, { width: 76, lineBreak: false });
-        drawBadgePill(doc, rule.status, 494, yPos + 2.5, 56, 10, rule.status);
-        yPos += 15;
+        doc.rect(36, yPos, 523, 14).fillAndStroke(isEven ? C.white : C.cardBg, C.borderLight);
+        doc.fillColor(C.textMain).fontSize(6.5).font('Helvetica-Bold').text(item.label, 42, yPos + 3.5, { width: 126, lineBreak: false });
+        doc.fillColor(C.textSecondary).fontSize(6.3).font('Helvetica').text(item.fromCoord, 172, yPos + 3.5, { width: 94, lineBreak: false });
+        doc.fillColor(C.primary).fontSize(6.3).font('Helvetica').text(item.toCoord, 270, yPos + 3.5, { width: 94, lineBreak: false });
+        doc.fillColor(C.textMain).fontSize(7.5).font('Helvetica-Bold').text(distStr, 368, yPos + 3, { width: 42, lineBreak: false });
+        doc.fillColor(C.textMuted).fontSize(6.8).font('Helvetica').text(rule.allowed, 414, yPos + 3.5, { width: 76, lineBreak: false });
+        drawBadgePill(doc, rule.status, 494, yPos + 2, 56, 10, rule.status);
+        yPos += 14;
       });
 
       yPos += 5;
@@ -1090,6 +1093,13 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
           dist: calculateDistanceMeters(photoCards[3].lat, photoCards[3].lng, photoCards[4].lat, photoCards[4].lng),
           fromCoord: (photoCards[3].lat && photoCards[3].lng) ? `${photoCards[3].lat}, ${photoCards[3].lng}` : 'Not Captured',
           toCoord: (photoCards[4].lat && photoCards[4].lng) ? `${photoCards[4].lat}, ${photoCards[4].lng}` : 'Not Captured'
+        },
+        {
+          key: 'selfie-to-joint',
+          label: 'Live Selfie -> TL & Emp Joint Selfie',
+          dist: calculateDistanceMeters(photoCards[4].lat, photoCards[4].lng, photoCards[5].lat, photoCards[5].lng),
+          fromCoord: (photoCards[4].lat && photoCards[4].lng) ? `${photoCards[4].lat}, ${photoCards[4].lng}` : 'Not Captured',
+          toCoord: (photoCards[5].lat && photoCards[5].lng) ? `${photoCards[5].lat}, ${photoCards[5].lng}` : 'Not Captured'
         }
       ];
 
@@ -1098,21 +1108,21 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
         const distStr = item.dist !== null ? `${item.dist} m` : 'Not Available';
         const isEven = idx % 2 === 0;
 
-        doc.rect(36, yPos, 523, 15).fillAndStroke(isEven ? C.white : C.cardBg, C.borderLight);
-        doc.fillColor(C.textMain).fontSize(6.5).font('Helvetica-Bold').text(item.label, 42, yPos + 4, { width: 126, lineBreak: false });
-        doc.fillColor(C.textSecondary).fontSize(6.3).font('Helvetica').text(item.fromCoord, 172, yPos + 4, { width: 94, lineBreak: false });
-        doc.fillColor(C.primary).fontSize(6.3).font('Helvetica').text(item.toCoord, 270, yPos + 4, { width: 94, lineBreak: false });
-        doc.fillColor(C.textMain).fontSize(7.5).font('Helvetica-Bold').text(distStr, 368, yPos + 3.5, { width: 42, lineBreak: false });
-        doc.fillColor(C.textMuted).fontSize(6.8).font('Helvetica').text(rule.allowed, 414, yPos + 4, { width: 76, lineBreak: false });
-        drawBadgePill(doc, rule.status, 494, yPos + 2.5, 56, 10, rule.status);
-        yPos += 15;
+        doc.rect(36, yPos, 523, 14).fillAndStroke(isEven ? C.white : C.cardBg, C.borderLight);
+        doc.fillColor(C.textMain).fontSize(6.5).font('Helvetica-Bold').text(item.label, 42, yPos + 3.5, { width: 126, lineBreak: false });
+        doc.fillColor(C.textSecondary).fontSize(6.3).font('Helvetica').text(item.fromCoord, 172, yPos + 3.5, { width: 94, lineBreak: false });
+        doc.fillColor(C.primary).fontSize(6.3).font('Helvetica').text(item.toCoord, 270, yPos + 3.5, { width: 94, lineBreak: false });
+        doc.fillColor(C.textMain).fontSize(7.5).font('Helvetica-Bold').text(distStr, 368, yPos + 3, { width: 42, lineBreak: false });
+        doc.fillColor(C.textMuted).fontSize(6.8).font('Helvetica').text(rule.allowed, 414, yPos + 3.5, { width: 76, lineBreak: false });
+        drawBadgePill(doc, rule.status, 494, yPos + 2, 56, 10, rule.status);
+        yPos += 14;
       });
 
       yPos += 5;
       // Spatial Proximity Assurance Strip
       doc.rect(36, yPos, 523, 16).fillAndStroke('#F1F5F9', C.borderLight);
       doc.fillColor(C.primary).fontSize(6.2).font('Helvetica-Bold').text('SPATIAL PROXIMITY ASSURANCE:', 42, yPos + 5, { lineBreak: false });
-      doc.fillColor(C.textSecondary).fontSize(6.2).font('Helvetica').text('All 5 photographic evidence locations independently cross-referenced with satellite telemetry and validated within maximum permissible radius tolerances.', 165, yPos + 5, { width: 388, lineBreak: false });
+      doc.fillColor(C.textSecondary).fontSize(6.2).font('Helvetica').text('All 6 photographic evidence locations independently cross-referenced with satellite telemetry and validated within maximum permissible radius tolerances.', 165, yPos + 5, { width: 388, lineBreak: false });
       yPos += 20;
 
 
@@ -1125,7 +1135,7 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
       drawPageWatermark(doc);
 
       yPos = 35;
-      yPos = drawSectionBanner(doc, '7. Verification Checklist (10-Point Core Compliance Audit)', yPos);
+      yPos = drawSectionBanner(doc, '7. Verification Checklist (11-Point Core Compliance Audit)', yPos);
 
       const checklistItems = [
         { name: '1. Employee Identity', standard: 'Master profile details & employee ID match', result: data.details_confirmed ? 'Confirmed by Employee' : 'Master Verified', status: 'PASS' },
@@ -1135,9 +1145,10 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
         { name: '5. Full Building', standard: 'Exterior building & premise photo verified', result: photoCards[2].filePath ? 'Building Exterior Captured' : 'Pending', status: photoCards[2].filePath ? 'PASS' : 'REVIEW' },
         { name: '6. Door Number Selfie', standard: 'Door/house number readable with employee in frame', result: photoCards[3].filePath ? 'Door Number & Face Verified' : 'Pending', status: photoCards[3].filePath ? 'PASS' : 'REVIEW' },
         { name: '7. Live Selfie', standard: 'Real-time biometric facial selfie captured', result: photoCards[4].filePath ? 'Biometric Facial Selfie Passed' : 'Pending', status: photoCards[4].filePath ? 'PASS' : 'REVIEW' },
-        { name: '8. Address Proof', standard: 'Government-issued address proof document uploaded', result: data.document_path ? `${docType} Attached` : 'Pending', status: data.document_path ? 'PASS' : 'REVIEW' },
-        { name: '9. Name Match', standard: 'Name on address proof matches employee record', result: `HR: ${hrNameMatch} | Emp: ${empNameMatch}`, status: hrNameMatch === 'MATCH' ? 'PASS' : 'REVIEW' },
-        { name: '10. Address Match', standard: 'Address on document matches confirmed residence', result: `HR: ${hrAddrMatch} | Emp: ${empAddrMatch}`, status: hrAddrMatch === 'MATCH' || empAddrMatch === 'MATCH' ? 'PASS' : 'REVIEW' }
+        { name: '8. TL & Joint Selfie', standard: 'TL and Employee captured together via live camera', result: photoCards[5].filePath ? `TL: ${photoCards[5].tlName || data.team_leader || 'Verified'} (Dual Faces)` : 'Pending', status: photoCards[5].filePath ? 'PASS' : 'REVIEW' },
+        { name: '9. Address Proof', standard: 'Government-issued address proof document uploaded', result: data.document_path ? `${docType} Attached` : 'Pending', status: data.document_path ? 'PASS' : 'REVIEW' },
+        { name: '10. Name Match', standard: 'Name on address proof matches employee record', result: `HR: ${hrNameMatch} | Emp: ${empNameMatch}`, status: hrNameMatch === 'MATCH' ? 'PASS' : 'REVIEW' },
+        { name: '11. Address Match', standard: 'Address on document matches confirmed residence', result: `HR: ${hrAddrMatch} | Emp: ${empAddrMatch}`, status: hrAddrMatch === 'MATCH' || empAddrMatch === 'MATCH' ? 'PASS' : 'REVIEW' }
       ];
 
       // Checklist Table Header
@@ -1195,7 +1206,7 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
         { action: 'Verification Started', actor_type: 'System', actor_name: 'Collman System', created_at: data.created_at || '2026-09-22 05:49:57', details: 'Case initialized and common link generated.' },
         { action: 'Automatic HR Address Geocoded', actor_type: 'System', actor_name: 'Automatic Geocoding Engine', created_at: data.created_at || '2026-09-22 05:50:00', details: 'HR address geocoded with PRECISE score.' },
         { action: 'GPS Captured', actor_type: 'Employee', actor_name: data.employee_name, created_at: data.submitted_at || '2026-09-23 06:33:03', details: 'Live coordinates successfully recorded.' },
-        { action: 'Evidence Captured', actor_type: 'Employee', actor_name: data.employee_name, created_at: data.submitted_at || '2026-09-23 06:33:03', details: 'All 5 mandatory evidence photographs submitted.' },
+        { action: 'Evidence Captured', actor_type: 'Employee', actor_name: data.employee_name, created_at: data.submitted_at || '2026-09-23 06:33:03', details: 'All 6 mandatory evidence photographs submitted including TL Joint Selfie.' },
         { action: 'Address Proof Submitted', actor_type: 'Employee', actor_name: data.employee_name, created_at: data.submitted_at || '2026-09-23 06:33:03', details: 'Address proof document uploaded and OCR processed.' },
         { action: 'Final Decision: ' + finalDecision, actor_type: 'Reviewer', actor_name: reviewerName, created_at: data.reviewed_at || '2026-09-23 09:28:32', details: remarks }
       ];

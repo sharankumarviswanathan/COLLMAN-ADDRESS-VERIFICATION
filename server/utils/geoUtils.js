@@ -900,6 +900,166 @@ async function geocodeAddress(addressInput, options = {}) {
   };
 }
 
+/**
+ * Common Indian city and state aliases for reliable branch location identification
+ */
+const INDIAN_CITY_ALIASES = [
+  { keywords: ['bangalore', 'bengaluru'], city: 'Bengaluru', state: 'Karnataka' },
+  { keywords: ['chennai', 'madras'], city: 'Chennai', state: 'Tamil Nadu' },
+  { keywords: ['mumbai', 'bombay'], city: 'Mumbai', state: 'Maharashtra' },
+  { keywords: ['delhi', 'new delhi'], city: 'New Delhi', state: 'Delhi' },
+  { keywords: ['hyderabad', 'secunderabad', 'cyberabad'], city: 'Hyderabad', state: 'Telangana' },
+  { keywords: ['kolkata', 'calcutta'], city: 'Kolkata', state: 'West Bengal' },
+  { keywords: ['pune', 'poona'], city: 'Pune', state: 'Maharashtra' },
+  { keywords: ['gurgaon', 'gurugram'], city: 'Gurugram', state: 'Haryana' },
+  { keywords: ['noida', 'greater noida'], city: 'Noida', state: 'Uttar Pradesh' },
+  { keywords: ['ahmedabad'], city: 'Ahmedabad', state: 'Gujarat' },
+  { keywords: ['jaipur'], city: 'Jaipur', state: 'Rajasthan' },
+  { keywords: ['lucknow'], city: 'Lucknow', state: 'Uttar Pradesh' },
+  { keywords: ['chandigarh'], city: 'Chandigarh', state: 'Chandigarh' },
+  { keywords: ['indore'], city: 'Indore', state: 'Madhya Pradesh' },
+  { keywords: ['bhopal'], city: 'Bhopal', state: 'Madhya Pradesh' },
+  { keywords: ['nagpur'], city: 'Nagpur', state: 'Maharashtra' },
+  { keywords: ['vadodara', 'baroda'], city: 'Vadodara', state: 'Gujarat' },
+  { keywords: ['surat'], city: 'Surat', state: 'Gujarat' },
+  { keywords: ['visakhapatnam', 'vizag'], city: 'Visakhapatnam', state: 'Andhra Pradesh' },
+  { keywords: ['vijayawada'], city: 'Vijayawada', state: 'Andhra Pradesh' },
+  { keywords: ['kochi', 'cochin'], city: 'Kochi', state: 'Kerala' },
+  { keywords: ['thiruvananthapuram', 'trivandrum'], city: 'Thiruvananthapuram', state: 'Kerala' },
+  { keywords: ['coimbatore'], city: 'Coimbatore', state: 'Tamil Nadu' },
+  { keywords: ['madurai'], city: 'Madurai', state: 'Tamil Nadu' },
+  { keywords: ['tiruchirappalli', 'trichy'], city: 'Tiruchirappalli', state: 'Tamil Nadu' },
+  { keywords: ['salem'], city: 'Salem', state: 'Tamil Nadu' },
+  { keywords: ['mysuru', 'mysore'], city: 'Mysuru', state: 'Karnataka' },
+  { keywords: ['mangalore', 'mangaluru'], city: 'Mangaluru', state: 'Karnataka' },
+  { keywords: ['hubballi', 'hubli', 'dharwad'], city: 'Hubballi', state: 'Karnataka' },
+  { keywords: ['bhubaneswar'], city: 'Bhubaneswar', state: 'Odisha' },
+  { keywords: ['patna'], city: 'Patna', state: 'Bihar' },
+  { keywords: ['guwahati'], city: 'Guwahati', state: 'Assam' }
+];
+
+/**
+ * Identify and lookup City and State from a Branch Name or location query string.
+ * Uses Google Maps Geocoding API if key configured, with fallback to OpenStreetMap Nominatim
+ * and local alias resolution.
+ */
+async function lookupLocationDetails(rawQuery, options = {}) {
+  const query = (rawQuery || '').trim();
+  if (!query || query.length < 2) {
+    return { matches: [], isAmbiguous: false, reliableMatch: null };
+  }
+
+  const candidateMap = new Map();
+  const googleApiKey = options.googleApiKey || process.env.GOOGLE_MAPS_API_KEY;
+
+  // 1. Try Google Maps if API key is present
+  if (googleApiKey && String(googleApiKey).trim().length > 0) {
+    try {
+      const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${encodeURIComponent(String(googleApiKey).trim())}&region=in`;
+      const gRes = await fetch(gUrl);
+      if (gRes.ok) {
+        const gData = await gRes.json();
+        if (gData.status === 'OK' && Array.isArray(gData.results)) {
+          for (const res of gData.results) {
+            let city = '';
+            let state = '';
+            for (const comp of res.address_components || []) {
+              if (comp.types.includes('locality')) {
+                city = comp.long_name;
+              } else if (!city && (comp.types.includes('administrative_area_level_2') || comp.types.includes('sublocality_level_1'))) {
+                city = comp.long_name;
+              }
+              if (comp.types.includes('administrative_area_level_1')) {
+                state = comp.long_name;
+              }
+            }
+            if (city && state) {
+              const key = `${city.toLowerCase()}|${state.toLowerCase()}`;
+              if (!candidateMap.has(key)) {
+                candidateMap.set(key, {
+                  city,
+                  state,
+                  displayName: res.formatted_address || `${city}, ${state}`,
+                  provider: 'Google Maps'
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[LOCATION LOOKUP] Google Maps lookup error:', err.message);
+    }
+  }
+
+  // 2. OpenStreetMap / Nominatim (Fallback or primary if no Google Maps key)
+  if (candidateMap.size === 0) {
+    try {
+      const nUrl = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&addressdetails=1&countrycodes=in&q=${encodeURIComponent(query)}`;
+      const headers = { 'User-Agent': 'CollmanAddressVerification/1.0 (internal-bgv@collman.com)' };
+      const nRes = await fetch(nUrl, { headers });
+      if (nRes.ok) {
+        const nData = await nRes.json();
+        if (Array.isArray(nData)) {
+          for (const item of nData) {
+            const a = item.address || {};
+            let city = a.city || a.town || a.municipality || a.city_district || a.suburb || a.county || a.state_district;
+            let state = a.state;
+            if (!city || !state) continue;
+
+            // Normalize city name (strip administrative suffixes)
+            city = city.replace(/\s+(Metropolitan Area|City Corporation|Municipal Corporation|Urban|District|Mandal|Taluk).*/i, '').trim();
+            const key = `${city.toLowerCase()}|${state.toLowerCase()}`;
+            if (!candidateMap.has(key)) {
+              candidateMap.set(key, {
+                city,
+                state,
+                displayName: item.display_name,
+                provider: 'OpenStreetMap / Nominatim'
+              });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[LOCATION LOOKUP] Nominatim lookup error:', err.message);
+    }
+  }
+
+  // 3. Check Indian city alias dictionary as fallback or complement
+  if (candidateMap.size === 0) {
+    const lowerQ = query.toLowerCase();
+    for (const a of INDIAN_CITY_ALIASES) {
+      const hasMatch = a.keywords.some(kw => {
+        const regex = new RegExp(`(^|[^a-z0-9])${kw}([^a-z0-9]|$)`, 'i');
+        return regex.test(lowerQ);
+      });
+      if (hasMatch) {
+        const key = `${a.city.toLowerCase()}|${a.state.toLowerCase()}`;
+        if (!candidateMap.has(key)) {
+          candidateMap.set(key, {
+            city: a.city,
+            state: a.state,
+            displayName: `${a.city}, ${a.state} (Identified from branch name)`,
+            provider: 'Geographic Intelligence'
+          });
+        }
+      }
+    }
+  }
+
+  const matches = Array.from(candidateMap.values());
+  const isAmbiguous = matches.length > 1;
+  const reliableMatch = matches.length === 1 ? matches[0] : null;
+
+  return {
+    query,
+    matches,
+    isAmbiguous,
+    reliableMatch
+  };
+}
+
 module.exports = {
   calculateDistanceMeters,
   formatDistance,
@@ -912,5 +1072,7 @@ module.exports = {
   extractPincode,
   evaluateCandidateResult,
   evaluateGoogleCandidate,
-  geocodeAddress
+  geocodeAddress,
+  lookupLocationDetails
 };
+

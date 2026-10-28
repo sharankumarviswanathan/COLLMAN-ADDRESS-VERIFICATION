@@ -24,8 +24,8 @@ import {
 export function VerificationQueue() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { user } = useAuth();
-  const isAdmin = ['Super Admin', 'HR/Admin'].includes(user?.role);
+  const { user, hasPermission, hasAnyPermission, isTeamLeader } = useAuth();
+  const isAdmin = user?.role === 'Super Admin' || ['Super Admin', 'HR/Admin'].includes(user?.role);
 
   const [cases, setCases] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, total: 0, limit: 20, totalPages: 1 });
@@ -136,13 +136,18 @@ export function VerificationQueue() {
       {/* Page Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '22px', flexWrap: 'wrap', gap: '14px' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--primary)', letterSpacing: '-0.02em', margin: 0 }}>
               BGV Verification Queue
             </h1>
             <span style={{ fontSize: '0.72rem', fontWeight: 600, backgroundColor: 'var(--primary-light)', color: 'var(--primary)', padding: '2px 8px', borderRadius: 'var(--radius-full)', border: '1px solid var(--primary-subtle)' }}>
               {pagination.total} Cases
             </span>
+            {isTeamLeader && (
+              <span className="badge badge-warning" style={{ fontSize: '0.72rem', fontWeight: 600 }}>
+                Showing Assigned Cases Only
+              </span>
+            )}
           </div>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '3px' }}>
             Submitted employee cases awaiting review, evidence validation, and final compliance decision
@@ -271,7 +276,7 @@ export function VerificationQueue() {
         </form>
 
         {/* Bulk Assign Bar */}
-        {selectedCaseRefs.length > 0 && (
+        {hasPermission('assign_reviewer') && selectedCaseRefs.length > 0 && (
           <div style={{
             marginTop: '12px',
             paddingTop: '12px',
@@ -497,16 +502,18 @@ export function VerificationQueue() {
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: '6px' }}>
-                        <button
-                          className="btn btn-primary btn-sm"
-                          onClick={() => navigate(`/admin/review/${item.employee_id}`)}
-                          style={{ padding: '5px 10px', fontSize: '0.78rem' }}
-                        >
-                          <ShieldCheck size={13} />
-                          <span>Review Case</span>
-                        </button>
+                        {hasAnyPermission('review_cases', 'approve_cases', 'reject_cases', 'make_decision') && (
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => navigate(`/admin/review/${item.employee_id}`)}
+                            style={{ padding: '5px 10px', fontSize: '0.78rem' }}
+                          >
+                            <ShieldCheck size={13} />
+                            <span>Review Case</span>
+                          </button>
+                        )}
 
-                        {isAdmin && (
+                        {hasPermission('delete_cases') && (
                           <button
                             id={`btn-delete-queue-case-${item.employee_id}`}
                             className="btn btn-secondary btn-sm"

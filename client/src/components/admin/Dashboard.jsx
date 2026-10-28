@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
 import {
   Users,
   UserPlus,
@@ -28,6 +29,7 @@ import {
 
 export function Dashboard() {
   const navigate = useNavigate();
+  const { user, hasPermission, hasAnyPermission, isTeamLeader } = useAuth();
   const [stats, setStats] = useState(null);
   const [recentActivity, setRecentActivity] = useState([]);
   const [masters, setMasters] = useState({ branches: [], departments: [], locations: [], reviewers: [] });
@@ -235,15 +237,16 @@ export function Dashboard() {
         gap: '12px'
       }}>
         {/* Category Pills matching Reference */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          background: 'rgba(255, 255, 255, 0.03)',
-          padding: '4px',
-          borderRadius: 'var(--radius-full)',
-          border: '1px solid rgba(255, 255, 255, 0.06)'
-        }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            background: 'rgba(255, 255, 255, 0.03)',
+            padding: '4px',
+            borderRadius: 'var(--radius-full)',
+            border: '1px solid rgba(255, 255, 255, 0.06)'
+          }}>
           <button
             className="btn-ghost"
             style={{
@@ -283,6 +286,12 @@ export function Dashboard() {
           >
             SLA Analytics
           </button>
+        </div>
+          {isTeamLeader && (
+            <span className="badge badge-warning" style={{ fontSize: '0.72rem', fontWeight: 600 }}>
+              Showing Assigned Records Only
+            </span>
+          )}
         </div>
 
         {/* Right Action Buttons */}
@@ -685,7 +694,7 @@ export function Dashboard() {
           <span>Mar</span>
           <span>Apr</span>
           <span>May</span>
-          <span style={{ color: '#E9D5FF', fontWeight: 700 }}>Jun</span>
+          <span style={{ color: 'var(--primary)', fontWeight: 700 }}>Jun</span>
           <span>Jul</span>
           <span>Aug</span>
           <span>Sep</span>
@@ -707,7 +716,23 @@ export function Dashboard() {
               <select
                 className="form-control form-select"
                 value={selectedBranch}
-                onChange={(e) => setSelectedBranch(e.target.value)}
+                onChange={(e) => {
+                  const newBranch = e.target.value;
+                  setSelectedBranch(newBranch);
+                  if (newBranch !== 'ALL' && selectedLocation !== 'ALL') {
+                    const bObj = masters.branches?.find(
+                      (b) => b.branch_name === newBranch || b.branch_code === newBranch
+                    );
+                    if (bObj) {
+                      const belongs = (masters.locations || []).some(
+                        (l) => l.branch_id === bObj.id && l.location_name === selectedLocation
+                      );
+                      if (!belongs) {
+                        setSelectedLocation('ALL');
+                      }
+                    }
+                  }
+                }}
               >
                 <option value="ALL">All Branches</option>
                 {masters.branches?.map((b) => (
@@ -740,9 +765,17 @@ export function Dashboard() {
                 onChange={(e) => setSelectedLocation(e.target.value)}
               >
                 <option value="ALL">All Locations</option>
-                {masters.locations?.map((l) => (
-                  <option key={l.id} value={l.location_name}>{l.location_name}</option>
-                ))}
+                {(() => {
+                  const bObj = selectedBranch !== 'ALL'
+                    ? masters.branches?.find((b) => b.branch_name === selectedBranch || b.branch_code === selectedBranch)
+                    : null;
+                  const locList = bObj
+                    ? (masters.locations || []).filter((l) => l.branch_id === bObj.id)
+                    : (masters.locations || []);
+                  return locList.map((l) => (
+                    <option key={l.id} value={l.location_name}>{l.location_name}</option>
+                  ));
+                })()}
               </select>
             </div>
 
@@ -847,80 +880,88 @@ export function Dashboard() {
 
           <div className="quick-ops-grid">
             {/* Add Single Employee */}
-            <div
-              className="quick-op-card"
-              onClick={() => navigate('/admin/employees?action=add')}
-              role="button"
-              tabIndex={0}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                <div className="quick-op-icon" style={{ backgroundColor: 'rgba(192, 132, 252, 0.15)', color: '#C084FC' }}>
-                  <UserPlus size={18} />
+            {hasPermission('create_employee') && (
+              <div
+                className="quick-op-card"
+                onClick={() => navigate('/admin/employees?action=add')}
+                role="button"
+                tabIndex={0}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <div className="quick-op-icon" style={{ backgroundColor: 'rgba(192, 132, 252, 0.15)', color: '#C084FC' }}>
+                    <UserPlus size={18} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-main)' }}>Add Single Employee</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Manual single candidate onboarding & link generation</div>
+                  </div>
                 </div>
-                <div>
-                  <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-main)' }}>Add Single Employee</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Manual single candidate onboarding & link generation</div>
-                </div>
+                <ChevronRight size={16} color="var(--text-muted)" />
               </div>
-              <ChevronRight size={16} color="var(--text-muted)" />
-            </div>
+            )}
 
             {/* Bulk Upload Employees */}
-            <div
-              className="quick-op-card"
-              onClick={() => navigate('/admin/bulk-upload')}
-              role="button"
-              tabIndex={0}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                <div className="quick-op-icon" style={{ backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#C084FC' }}>
-                  <Building2 size={18} />
+            {hasPermission('bulk_upload') && (
+              <div
+                className="quick-op-card"
+                onClick={() => navigate('/admin/bulk-upload')}
+                role="button"
+                tabIndex={0}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <div className="quick-op-icon" style={{ backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#C084FC' }}>
+                    <Building2 size={18} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-main)' }}>Bulk Upload Employees (Excel/CSV)</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Batch import candidate profiles with custom column mapping</div>
+                  </div>
                 </div>
-                <div>
-                  <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-main)' }}>Bulk Upload Employees (Excel/CSV)</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Batch import candidate profiles with custom column mapping</div>
-                </div>
+                <ChevronRight size={16} color="var(--text-muted)" />
               </div>
-              <ChevronRight size={16} color="var(--text-muted)" />
-            </div>
+            )}
 
             {/* Open BGV Verification Queue */}
-            <div
-              className="quick-op-card"
-              onClick={() => navigate('/admin/queue?status=Pending BGV Review')}
-              role="button"
-              tabIndex={0}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                <div className="quick-op-icon" style={{ backgroundColor: 'rgba(52, 211, 153, 0.15)', color: '#34D399' }}>
-                  <ShieldCheck size={18} />
+            {hasAnyPermission('view_queue', 'review_cases') && (
+              <div
+                className="quick-op-card"
+                onClick={() => navigate('/admin/queue?status=Pending BGV Review')}
+                role="button"
+                tabIndex={0}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <div className="quick-op-icon" style={{ backgroundColor: 'rgba(52, 211, 153, 0.15)', color: '#34D399' }}>
+                    <ShieldCheck size={18} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-main)' }}>Open BGV Verification Queue</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Direct access to candidate cases pending reviewer approval</div>
+                  </div>
                 </div>
-                <div>
-                  <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-main)' }}>Open BGV Verification Queue</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Direct access to candidate cases pending reviewer approval</div>
-                </div>
+                <ChevronRight size={16} color="var(--text-muted)" />
               </div>
-              <ChevronRight size={16} color="var(--text-muted)" />
-            </div>
+            )}
 
             {/* View Internal Download Area */}
-            <div
-              className="quick-op-card"
-              onClick={() => navigate('/admin/downloads')}
-              role="button"
-              tabIndex={0}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                <div className="quick-op-icon" style={{ backgroundColor: 'rgba(56, 189, 248, 0.15)', color: '#38BDF8' }}>
-                  <HardDrive size={18} />
+            {hasPermission('download_reports') && (
+              <div
+                className="quick-op-card"
+                onClick={() => navigate('/admin/downloads')}
+                role="button"
+                tabIndex={0}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <div className="quick-op-icon" style={{ backgroundColor: 'rgba(56, 189, 248, 0.15)', color: '#38BDF8' }}>
+                    <HardDrive size={18} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-main)' }}>View Internal Download Area</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Access generated BGV reports, audits and zip archives</div>
+                  </div>
                 </div>
-                <div>
-                  <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-main)' }}>View Internal Download Area</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Access generated BGV reports, audits and zip archives</div>
-                </div>
+                <ChevronRight size={16} color="var(--text-muted)" />
               </div>
-              <ChevronRight size={16} color="var(--text-muted)" />
-            </div>
+            )}
           </div>
         </div>
 

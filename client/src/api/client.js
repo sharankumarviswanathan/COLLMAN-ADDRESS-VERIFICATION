@@ -48,12 +48,23 @@ async function request(url, options = {}) {
 export const api = {
   // --- Employee Common Link Verification ---
   verify: {
-    validateId: (employeeId) =>
-      request('/verify/validate-id', {
+    validateTl: (tlId) =>
+      request('/verify/validate-tl', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employeeId })
+        body: JSON.stringify({ tlId })
       }),
+
+    validateId: (payload) => {
+      const body = typeof payload === 'object' && payload !== null
+        ? payload
+        : { employeeId: payload };
+      return request('/verify/validate-id', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+    },
 
     getProgress: () =>
       request('/verify/progress', {
@@ -128,6 +139,19 @@ export const api = {
         method: 'POST',
         headers: getEmployeeHeaders(),
         body: JSON.stringify(typeof imageBase64 === 'object' ? imageBase64 : { imageBase64, ...meta })
+      }),
+
+    uploadJointSelfie: (imageBase64, meta = {}) =>
+      request('/verify/upload-joint-selfie', {
+        method: 'POST',
+        headers: getEmployeeHeaders(),
+        body: JSON.stringify(typeof imageBase64 === 'object' ? imageBase64 : { imageBase64, ...meta })
+      }),
+
+    getTlList: () =>
+      request('/verify/tl-list', {
+        method: 'GET',
+        headers: getEmployeeHeaders()
       }),
 
     validateImage: (imageBase64, photoType, hrAddress = '', clientMetrics = {}) =>
@@ -252,6 +276,13 @@ export const api = {
         body: JSON.stringify(data)
       }),
 
+    update: (id, data) =>
+      request(`/employees/${id}`, {
+        method: 'PUT',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(data)
+      }),
+
     parseBulkFile: async (file) => {
       const formData = new FormData();
       formData.append('file', file);
@@ -272,6 +303,23 @@ export const api = {
         headers: getAdminHeaders(),
         body: JSON.stringify({ filePath, columnMapping })
       }),
+
+    downloadSampleTemplate: async (format = 'xlsx') => {
+      const token = localStorage.getItem('collman_admin_token');
+      const res = await fetch(`${API_BASE}/employees/sample-template?format=${format}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (!res.ok) throw new Error('Failed to download employee sample file.');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Collman_Employee_Bulk_Upload_Sample.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    },
 
     delete: (id) =>
       request(`/employees/${id}`, {
@@ -373,8 +421,114 @@ export const api = {
       });
     },
 
-    getAll: () =>
-      request('/masters/all', {
+    getAll: (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return request(`/masters/all${query ? `?${query}` : ''}`, {
+        headers: getAdminHeaders()
+      });
+    },
+
+    lookupLocation: (query) =>
+      request(`/masters/lookup-location?query=${encodeURIComponent(query)}`, {
+        headers: getAdminHeaders()
+      }),
+
+    getTeamLeadersByManager: (managerId) =>
+      request(`/masters/team-leaders?managerId=${encodeURIComponent(managerId)}`, {
+        headers: getAdminHeaders()
+      }),
+
+    createBranch: (data) =>
+      request('/masters/branches', {
+        method: 'POST',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(data)
+      }),
+
+    updateBranch: (id, data) =>
+      request(`/masters/branches/${id}`, {
+        method: 'PUT',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(data)
+      }),
+
+    deleteBranch: (id) =>
+      request(`/masters/branches/${id}`, {
+        method: 'DELETE',
+        headers: getAdminHeaders()
+      }),
+
+    getBranchLocations: (branchId, params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return request(`/masters/branches/${branchId}/locations${query ? `?${query}` : ''}`, {
+        headers: getAdminHeaders()
+      });
+    },
+
+    getLocations: (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return request(`/masters/locations${query ? `?${query}` : ''}`, {
+        headers: getAdminHeaders()
+      });
+    },
+
+    createLocation: (data) =>
+      request('/masters/locations', {
+        method: 'POST',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(data)
+      }),
+
+    updateLocation: (id, data) =>
+      request(`/masters/locations/${id}`, {
+        method: 'PUT',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(data)
+      }),
+
+    deleteLocation: (id) =>
+      request(`/masters/locations/${id}`, {
+        method: 'DELETE',
+        headers: getAdminHeaders()
+      }),
+
+    createDepartment: (data) =>
+      request('/masters/departments', {
+        method: 'POST',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(data)
+      }),
+
+    updateDepartment: (id, data) =>
+      request(`/masters/departments/${id}`, {
+        method: 'PUT',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(data)
+      }),
+
+    deleteDepartment: (id) =>
+      request(`/masters/departments/${id}`, {
+        method: 'DELETE',
+        headers: getAdminHeaders()
+      }),
+
+    createDesignation: (data) =>
+      request('/masters/designations', {
+        method: 'POST',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(data)
+      }),
+
+    updateDesignation: (id, data) =>
+      request(`/masters/designations/${id}`, {
+        method: 'PUT',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(data)
+      }),
+
+    deleteDesignation: (id) =>
+      request(`/masters/designations/${id}`, {
+        method: 'DELETE',
         headers: getAdminHeaders()
       }),
 
@@ -414,10 +568,12 @@ export const api = {
 
   // --- User Management ---
   users: {
-    list: () =>
-      request('/users', {
+    list: (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return request(`/users${query ? `?${query}` : ''}`, {
         headers: getAdminHeaders()
-      }),
+      });
+    },
 
     create: (data) =>
       request('/users', {
@@ -431,6 +587,112 @@ export const api = {
         method: 'PUT',
         headers: getAdminHeaders(),
         body: JSON.stringify(data)
+      }),
+
+    delete: (id) =>
+      request(`/users/${id}`, {
+        method: 'DELETE',
+        headers: getAdminHeaders()
+      }),
+
+    exportUsers: async (format = 'xlsx', params = {}) => {
+      const token = localStorage.getItem('collman_admin_token');
+      const queryParams = new URLSearchParams({ format, ...params }).toString();
+      const res = await fetch(`${API_BASE}/users/export?${queryParams}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to export user list.');
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const dateStr = new Date().toISOString().split('T')[0];
+      a.download = `Collman_Users_Directory_${dateStr}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    },
+
+    downloadSampleTemplate: async (format = 'xlsx') => {
+      const token = localStorage.getItem('collman_admin_token');
+      const res = await fetch(`${API_BASE}/users/sample-template?format=${format}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (!res.ok) throw new Error('Failed to download sample file.');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Collman_User_Bulk_Upload_Sample.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    },
+
+    parseBulkFile: async (file) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      const token = localStorage.getItem('collman_admin_token');
+      const res = await fetch(`${API_BASE}/users/parse-bulk-file`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to parse file');
+      return data;
+    },
+
+    processBulkUpload: (filePath, columnMapping) =>
+      request('/users/process-bulk-upload', {
+        method: 'POST',
+        headers: getAdminHeaders(),
+        body: JSON.stringify({ filePath, columnMapping })
       })
+  },
+
+  // --- Roles & Permissions ---
+  roles: {
+    list: () =>
+      request('/roles', {
+        headers: getAdminHeaders()
+      }),
+
+    getPermissionsCatalog: () =>
+      request('/roles/permissions-catalog', {
+        headers: getAdminHeaders()
+      }),
+
+    create: (data) =>
+      request('/roles', {
+        method: 'POST',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(data)
+      }),
+
+    update: (id, data) =>
+      request(`/roles/${id}`, {
+        method: 'PUT',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(data)
+      }),
+
+    delete: (id, options = {}) => {
+      const queryParams = new URLSearchParams();
+      if (options.reassign_to) queryParams.set('reassign_to', options.reassign_to);
+      if (options.force) queryParams.set('force', options.force);
+      if (options.action) queryParams.set('action', options.action);
+      const qs = queryParams.toString();
+      return request(`/roles/${id}${qs ? `?${qs}` : ''}`, {
+        method: 'DELETE',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(options)
+      });
+    }
   }
 };

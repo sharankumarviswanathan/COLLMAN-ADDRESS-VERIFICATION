@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
 import {
   ScrollText,
   Search,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 
 export function AuditLogs() {
+  const { user, hasPermission, hasAnyPermission } = useAuth();
   const [logs, setLogs] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, total: 0, limit: 25, totalPages: 1 });
   const [loading, setLoading] = useState(true);
@@ -108,12 +110,12 @@ export function AuditLogs() {
             height: 44,
             borderRadius: 'var(--radius-md)',
             background: 'linear-gradient(135deg, rgba(216, 180, 254, 0.25) 0%, rgba(168, 85, 247, 0.15) 100%)',
-            color: '#FFFFFF',
+            color: 'var(--text-accent)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             boxShadow: '0 0 16px rgba(168, 85, 247, 0.25)',
-            border: '1px solid rgba(216, 180, 254, 0.3)'
+            border: '1px solid var(--border-color)'
           }}>
             <ScrollText size={22} />
           </div>
@@ -122,7 +124,7 @@ export function AuditLogs() {
               <h1 style={{
                 fontSize: '1.5rem',
                 fontWeight: 700,
-                color: '#FFFFFF',
+                color: 'var(--text-main)',
                 letterSpacing: '-0.02em',
                 margin: 0,
                 fontFamily: 'var(--font-heading)'
@@ -141,10 +143,12 @@ export function AuditLogs() {
         </div>
 
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-          <button className="btn btn-secondary btn-sm" onClick={handleExportAudit}>
-            <Download size={14} />
-            <span>Export to Download Area</span>
-          </button>
+          {hasAnyPermission('export_audit_logs', 'download_reports') && (
+            <button className="btn btn-secondary btn-sm" onClick={handleExportAudit}>
+              <Download size={14} />
+              <span>Export to Download Area</span>
+            </button>
+          )}
 
           <button className="btn btn-secondary btn-sm" onClick={loadAuditLogs} disabled={loading}>
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />

@@ -1,7 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
-const { getOcrWorker } = require('./imageValidator');
+const {
+  getIndianLanguageWorker,
+  detectDocumentLanguage,
+  normalizeIndicNumerals,
+  transliterateIndicToLatin
+} = require('./indianLanguageOcr');
 
 /**
  * Extract clean text from a PDF Buffer by parsing content streams.
@@ -53,6 +58,7 @@ function extractTextFromPdfBuffer(pdfBuf) {
 
 /**
  * Extract text from document file (PDF or image).
+ * Uses multi-language Tesseract worker supporting English, Hindi, Tamil, Telugu, Kannada, Malayalam.
  */
 async function extractTextFromDocument(filePath) {
   if (!filePath || !fs.existsSync(filePath)) {
@@ -73,9 +79,9 @@ async function extractTextFromDocument(filePath) {
     }
   }
 
-  // Fallback to Tesseract OCR (for images or raster PDFs)
+  // Fallback to 6-Language Tesseract OCR (for images or raster PDFs)
   try {
-    const worker = await getOcrWorker();
+    const worker = await getIndianLanguageWorker();
     if (worker) {
       const imgBuffer = fs.readFileSync(filePath);
       const ret = await worker.recognize(imgBuffer);
@@ -84,18 +90,19 @@ async function extractTextFromDocument(filePath) {
       }
     }
   } catch (ocrErr) {
-    console.warn('OCR error during document extraction:', ocrErr.message);
+    console.warn('Multi-language OCR error during document extraction:', ocrErr.message);
   }
 
   return '';
 }
 
 /**
- * Clean OCR / document formatting artifacts
+ * Clean OCR / document formatting artifacts and normalize Indic numerals
  */
 function cleanDocumentText(rawText) {
   if (!rawText) return '';
-  return rawText
+  const normalized = normalizeIndicNumerals(rawText);
+  return normalized
     .replace(/Ad\s*dress/gi, 'Address')
     .replace(/Ori\s*ginal/gi, 'Original')
     .replace(/Con\s*firmed/gi, 'Confirmed')
@@ -115,30 +122,39 @@ function cleanDocumentText(rawText) {
 
 /**
  * Identify and isolate the residential address from document text.
+ * Supports English, Hindi, Tamil, Telugu, Kannada, and Malayalam address labels.
  */
 function extractAddressFromText(rawText) {
   if (!rawText || rawText.trim().length === 0) return '';
   const cleaned = cleanDocumentText(rawText);
 
-  // 1. Search for address labels commonly on Aadhaar, Utility Bills, or BGV documents
+  // 1. Search for address labels across English, Hindi, Tamil, Telugu, Kannada, and Malayalam
   const match = cleaned.match(
-    /(?:Original HR Address|Confirmed Address|Residential Address|Permanent Address|Current Address|Address|Addr)\s*:\s*([^:]+?)(?=(?:Original HR Address|Confirmed Address|Residence Type|Submission Timestamp|Date of Joining|Date|Ref:|GPS|Declaration|Reviewer|This is|$))/i
+    /(?:Original HR Address|Confirmed Address|Residential Address|Permanent Address|Current Address|Address|Addr|முகவரி|இருப்பிட முகவரி|நிரந்தர முகவரி|पता|स्थाई पता|वर्तमान पता|निवासी|చిరునామా|శాశ్వత చిరునామా|ప్రస్తుత చిరునామా|ವಿಳಾಸ|ಖಾಯಂ ವಿಳಾಸ|ಪ್ರಸ್ತುತ ವಿಳಾಸ|മേൽവിലാസം|സ്ഥിരമായ മേൽവിലാസം|നിലവിലെ മേൽവിലാസം)\s*[:\-\.]?\s*([^:]+?)(?=(?:Original HR Address|Confirmed Address|Residence Type|Submission Timestamp|Date of Joining|Date|Ref:|GPS|Declaration|Reviewer|This is|பிறந்த தேதி|ஆண்|பெண்|जन्म तिथि|पुरुष|महिला|పుట్టిన తేదీ|ಹುಟ್ಟಿದ ದಿನಾಂಕ|ജനന തീയതി|$))/i
   );
 
-  if (match && match[1].trim().length > 12) {
+  if (match && match[1].trim().length > 10) {
     let addr = match[1].trim().replace(/^,\s*|,\s*$/g, '');
     return addr;
   }
 
-  // 2. Search for block with door number + 6-digit Indian pincode
+  // 2. Search for Care-of / Son-of / Daughter-of / Wife-of patterns in English and Indian languages
+  const coMatch = cleaned.match(
+    /(?:C\/O|S\/O|D\/O|W\/O|Care of|Son of|Daughter of|Wife of|த\/பெ|க\/பெ|மனைவி|மகன்|மகள்|आत्मज|सुपुत्र|सुपुत्री|पत्नी|केयर ऑफ|కుమారుడు|కుమార్తె|భార్య|ಮಗ|ಮಗಳು|ಹೆಂಡತಿ|മകൻ|മകൾ|ഭാര്യ)\s*[:\-\.]?\s*([^,]+?,[\w\s,/-]{10,160}\b[1-9][0-9]{5}\b[\w\s,-]{0,35})/i
+  );
+  if (coMatch && coMatch[1].trim().length > 12) {
+    return coMatch[0].trim().replace(/^,\s*|,\s*$/g, '');
+  }
+
+  // 3. Search for block with door number / street + 6-digit Indian pincode
   const pinMatch = cleaned.match(
-    /(?:(?:no\.?|door|flat|plot)?\s*[\d/A-Za-z-]+\s*,)?[\w\s,/-]{8,140}\b[1-9][0-9]{5}\b[\w\s,-]{0,35}/i
+    /(?:(?:no\.?|door|flat|plot|எண்|सं|నెం|ಸಂ|നം)?\s*[\d/A-Za-z-]+\s*,)?[\w\s,/\-\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F]{8,150}\b[1-9][0-9]{5}\b[\w\s,\-\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F]{0,35}/i
   );
   if (pinMatch) {
     return pinMatch[0].trim().replace(/^,\s*|,\s*$/g, '');
   }
 
-  // 3. If text is relatively short (e.g. an address card snippet), return cleaned text
+  // 4. If text is relatively short (e.g. an address card snippet), return cleaned text
   if (cleaned.length <= 160) {
     return cleaned;
   }
@@ -197,15 +213,15 @@ function normalizeName(name) {
 }
 
 /**
- * Clean extracted name string
+ * Clean extracted name string across English and Indian scripts
  */
 function cleanExtractedName(rawName) {
   if (!rawName) return '';
   let cleaned = rawName
     .replace(/[\r\n\t]+/g, ' ')
-    .replace(/\b(?:mr|ms|mrs|dr|shri|smt|thiru|selvan|selvi|திரு|திருமதி)\.?\s+/gi, '')
-    .replace(/\b(?:s\/o|d\/o|w\/o|c\/o|s\/w\/d of|so|do|wo|co|த\/பெ|க\/பெ)[\s\S]*/i, '')
-    .replace(/[^a-zA-Z\u0B80-\u0BFF\s\.]/g, '')
+    .replace(/\b(?:mr|ms|mrs|dr|shri|smt|thiru|selvan|selvi|திரு|திருமதி|श्री|श्रीमती|శ్రీ|శ్రీమతి|ಶ್ರೀ|ಶ್ರೀಮತಿ|ശ്രീ|ശ്രീമതി)\.?\s+/gi, '')
+    .replace(/\b(?:s\/o|d\/o|w\/o|c\/o|s\/w\/d of|so|do|wo|co|த\/பெ|க\/பெ|மனைவி|மகன்|மகள்|आत्मज|सुपुत्र|सुपुत्री|पत्नी|केयर ऑफ|కుమారుడు|కుమార్తె|భార్య|ಮಗ|ಮಗಳು|ಹೆಂಡತಿ|മകൻ|മകൾ|ഭാര്യ)[\s\S]*/i, '')
+    .replace(/[^a-zA-Z\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\s\.]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -214,7 +230,8 @@ function cleanExtractedName(rawName) {
 }
 
 /**
- * Extract Employee / Person Name from document OCR text (English & Tamil)
+ * Extract Employee / Person Name from document OCR text.
+ * Supports English, Hindi, Tamil, Telugu, Kannada, and Malayalam.
  */
 function extractNameFromText(rawText, docType = '', candidateNames = []) {
   if (!rawText || rawText.trim().length === 0) return '';
@@ -222,13 +239,13 @@ function extractNameFromText(rawText, docType = '', candidateNames = []) {
   const cleanedText = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const lines = cleanedText.split('\n').map(l => l.trim()).filter(Boolean);
 
-  // 1. Passport Given Name + Surname check (English & Tamil)
+  // 1. Passport Given Name + Surname check (English & Indian Languages)
   let givenName = '';
   let surname = '';
   for (const line of lines) {
-    const gnMatch = line.match(/(?:Given\s*Name[s]?|கொடுக்கப்பட்ட\s*பெயர்)\s*[:\-\.]\s*([A-Za-z\u0B80-\u0BFF\s\.]+)/i);
+    const gnMatch = line.match(/(?:Given\s*Name[s]?|கொடுக்கப்பட்ட\s*பெயர்|दिया\s*गया\s*नाम|ఇచ్చిన\s*పేరు|ಹೆಸರು|നൽകിയ\s*പേര്)\s*[:\-\.]\s*([A-Za-z\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\s\.]+)/i);
     if (gnMatch) givenName = cleanExtractedName(gnMatch[1]);
-    const snMatch = line.match(/(?:Surname|குடும்பப்\s*பெயர்)\s*[:\-\.]\s*([A-Za-z\u0B80-\u0BFF\s\.]+)/i);
+    const snMatch = line.match(/(?:Surname|குடும்பப்\s*பெயர்|उपनाम|ఇంటిపేరు|ಉಪನಾಮ|കുടുംബപ്പേര്)\s*[:\-\.]\s*([A-Za-z\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\s\.]+)/i);
     if (snMatch) surname = cleanExtractedName(snMatch[1]);
   }
   if (givenName && surname) {
@@ -237,8 +254,8 @@ function extractNameFromText(rawText, docType = '', candidateNames = []) {
     return givenName || surname;
   }
 
-  // 2. Labelled regex check (English & Tamil)
-  const labelRegex = /(?:Employee\s*Name|Holder'?s?\s*Name|Elector'?s?\s*Name|Consumer\s*Name|Customer\s*Name|Applicant\s*Name|Tenant\s*Name|Tenant|Lessee|Full\s*Name|Name|பணியாளர்\s*பெயர்|வாக்காளர்\s*பெயர்|நுகர்வோர்\s*பெயர்|வாடிக்கையாளர்\s*பெயர்|குத்தகைதாரர்|வாடகைதாரர்|முழு\s*பெயர்|பெயர்)\s*[:\-\.]\s*([A-Za-z\u0B80-\u0BFF\s\.]+)/i;
+  // 2. Labelled regex check (English, Hindi, Tamil, Telugu, Kannada, Malayalam)
+  const labelRegex = /(?:Employee\s*Name|Holder'?s?\s*Name|Elector'?s?\s*Name|Consumer\s*Name|Customer\s*Name|Applicant\s*Name|Tenant\s*Name|Tenant|Lessee|Full\s*Name|Name|பணியாளர்\s*பெயர்|வாக்காளர்\s*பெயர்|நுகர்வோர்\s*பெயர்|வாடிக்கையாளர்\s*பெயர்|குத்தகைதாரர்|வாடகைதாரர்|முழு\s*பெயர்|பெயர்|कर्मचारी\s*का\s*नाम|मतदाता\s*का\s*नाम|उपभोक्ता\s*का\s*नाम|ग्राहक\s*का\s*नाम|आवेदक\s*का\s*नाम|किरायेदार\s*का\s*नाम|पूरा\s*नाम|नाम|ఉద్యోగి\s*పేరు|ఓటరు\s*పేరు|వినియోగదారు\s*పేరు|పూర్తి\s*పేరు|పేరు|ನೌಕರರ\s*ಹೆಸರು|ಮತದಾರರ\s*ಹೆಸರು|ಗ್ರಾಹಕರ\s*ಹೆಸರು|ಪೂರ್ಣ\s*ಹೆಸರು|ಹೆಸರು|ജീവനക്കാരന്റെ\s*പേര്|വോട്ടറുടെ\s*പേര്|ഉപഭോക്തൃ\s*പേര്|പൂർണ്ണ\s*പേര്|പേര്)\s*[:\-\.]\s*([A-Za-z\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\s\.]+)/i;
 
   for (const line of lines) {
     const match = line.match(labelRegex);
@@ -251,16 +268,16 @@ function extractNameFromText(rawText, docType = '', candidateNames = []) {
   }
 
   // 3. Aadhaar front heuristic:
-  // Look for line immediately before DOB / Year of Birth / பிறந்த தேதி / Gender / Male / Female
+  // Look for line immediately before DOB / Year of Birth / Gender in English and Indian languages
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (/(?:DOB|Year of Birth|Birth|பிறந்த தேதி|ஆண்|பெண்|Male|Female)\b/i.test(line)) {
+    if (/(?:DOB|Year of Birth|Birth|பிறந்த தேதி|ஆண்|பெண்|Male|Female|जन्म तिथि|पुरुष|महिला|पुట్టిన తేదీ|పురుషుడు|స్త్రీ|ಹುಟ್ಟಿದ ದಿನಾಂಕ|ಪುರುಷ|ಮಹಿಳೆ|ജനന തീയതി|പുരുഷൻ|സ്ത്രീ)\b/i.test(line)) {
       for (let prevIdx = i - 1; prevIdx >= Math.max(0, i - 3); prevIdx--) {
         const prevLine = lines[prevIdx];
         if (
-          !/(?:Government|India|Unique|Identification|Authority|Aadhaar|UIDAI|Mera|அரசு|ஆணையம்|ஆதார்|Download|Enrolment)/i.test(prevLine) &&
+          !/(?:Government|India|Unique|Identification|Authority|Aadhaar|UIDAI|Mera|அரசு|ஆணையம்|ஆதார்|भारत|सरकार|प्राधिकरण|ఆధార్|ಪ್ರಭುತ್ವ|ಸರ್ಕಾರ|ആധാർ|Download|Enrolment)/i.test(prevLine) &&
           !/\d{4}/.test(prevLine) &&
-          /[A-Za-z\u0B80-\u0BFF]{3,}/.test(prevLine)
+          /[A-Za-z\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F]{3,}/.test(prevLine)
         ) {
           const candidate = cleanExtractedName(prevLine);
           if (candidate.length >= 3) {
@@ -271,7 +288,7 @@ function extractNameFromText(rawText, docType = '', candidateNames = []) {
     }
   }
 
-  // 4. Candidate Names Match in Lines (Fuzzy Anchor)
+  // 4. Candidate Names Match in Lines (Fuzzy Anchor + Transliteration)
   const normCandidates = (Array.isArray(candidateNames) ? candidateNames : [candidateNames])
     .map(c => normalizeName(c))
     .filter(Boolean);
@@ -281,16 +298,18 @@ function extractNameFromText(rawText, docType = '', candidateNames = []) {
 
   for (const line of lines) {
     if (
-      line.length < 3 || line.length > 50 ||
-      /\b(?:street|nagar|road|flat|door|plot|chennai|tamil nadu|pincode|india|distributor|consumer|cylinder|refill|help@|www\.)\b/i.test(line) ||
+      line.length < 3 || line.length > 60 ||
+      /\b(?:street|nagar|road|flat|door|plot|chennai|tamil nadu|pincode|india|distributor|consumer|cylinder|refill|help@|www\.|मार्ग|सड़क|नगर|தெரு|நகர்|వీధి|నగర్|ರಸ್ತೆ|ನಗರ|റോഡ്|നഗർ)\b/i.test(line) ||
       /\d{3,}/.test(line)
     ) {
       continue;
     }
 
     const normLine = normalizeName(line);
+    const transLine = normalizeName(transliterateIndicToLatin(line));
+
     for (const cand of normCandidates) {
-      const sim = stringSimilarity(normLine, cand);
+      const sim = Math.max(stringSimilarity(normLine, cand), stringSimilarity(transLine, cand));
       if (sim > bestFuzzyScore) {
         bestFuzzyScore = sim;
         bestFuzzyLine = cleanExtractedName(line);
@@ -306,8 +325,8 @@ function extractNameFromText(rawText, docType = '', candidateNames = []) {
   for (const line of lines) {
     if (
       line.length >= 4 && line.length <= 40 &&
-      /^[A-Za-z\u0B80-\u0BFF\s\.]+$/.test(line) &&
-      !/(?:government|india|republic|driving|licence|election|commission|passport|agreement|bill|consumer|gas|lpg|authority)/i.test(line)
+      /^[A-Za-z\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\s\.]+$/.test(line) &&
+      !/(?:government|india|republic|driving|licence|election|commission|passport|agreement|bill|consumer|gas|lpg|authority|सरकार|प्राधिकरण|அரசு|ஆணையம்|ప్రభుత్వం|ಸರ್ಕಾರ|സർക്കാർ)/i.test(line)
     ) {
       const candidate = cleanExtractedName(line);
       if (candidate.split(' ').length >= 1 && candidate.length >= 3) {
@@ -320,9 +339,31 @@ function extractNameFromText(rawText, docType = '', candidateNames = []) {
 }
 
 /**
+ * Phonetic normalization for cross-lingual English and Indic transliterations
+ */
+function phoneticNormalize(name) {
+  return (name || '')
+    .toLowerCase()
+    .replace(/\bvi\b|\bvee\b/g, 'v')
+    .replace(/\bar\b|\baar\b/g, 'r')
+    .replace(/\bes\b|\bess\b/g, 's')
+    .replace(/\bem\b/g, 'm')
+    .replace(/\ben\b/g, 'n')
+    .replace(/\bkay\b|\bkaa\b/g, 'k')
+    .replace(/sh/g, 's')
+    .replace(/ee/g, 'i')
+    .replace(/oo/g, 'u')
+    .replace(/aa/g, 'a')
+    .replace(/vu\b/g, 'o')
+    .replace(/ph/g, 'f')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Compare target employee name with document name.
+ * Supports cross-lingual matching (English HR name vs. Hindi/Tamil/Telugu/Kannada/Malayalam document name).
  * Ignores case, extra spaces, minor punctuation, initials and small spelling variations.
- * Does not mark MATCH if clearly belonging to another person.
  */
 function compareNameComponents(targetName, documentName, documentFullText = '') {
   if (!targetName || !targetName.trim()) {
@@ -331,107 +372,135 @@ function compareNameComponents(targetName, documentName, documentFullText = '') 
 
   const normTarget = normalizeName(targetName);
   const normDoc = normalizeName(documentName);
+  const transDoc = normalizeName(transliterateIndicToLatin(documentName));
 
-  if (!normDoc) {
+  if (!normDoc && !transDoc) {
     if (documentFullText) {
       const normFull = normalizeName(documentFullText);
-      if (normFull.includes(normTarget)) {
-        return { match: 'MATCH', score: 90, details: 'Target name found in full document text.' };
+      const transFull = normalizeName(transliterateIndicToLatin(documentFullText));
+      if (normFull.includes(normTarget) || transFull.includes(normTarget)) {
+        return { match: 'MATCH', score: 90, details: 'Target name found in document text.' };
       }
     }
     return { match: 'NOT MATCH', score: 0, reason: 'Document name not readable.' };
   }
 
-  // 1. Exact Match
-  if (normTarget === normDoc) {
+  // 1. Direct or Transliterated Exact Match
+  if (normTarget === normDoc || normTarget === transDoc) {
     return { match: 'MATCH', score: 100, details: 'Exact match.' };
   }
 
-  // 2. Token Breakdown
-  const targetTokens = normTarget.split(' ').filter(Boolean);
-  const docTokens = normDoc.split(' ').filter(Boolean);
-
-  const targetMainTokens = targetTokens.filter(t => t.length > 1);
-  const docMainTokens = docTokens.filter(t => t.length > 1);
-
-  // 3. Token set match (e.g. "Kumar Sharan" vs "Sharan Kumar")
-  const targetSet = new Set(targetTokens);
-  const docSet = new Set(docTokens);
-  const isSubset = targetTokens.every(t => docSet.has(t));
-  const isDocSubset = docTokens.every(t => targetSet.has(t));
-
-  if (isSubset && isDocSubset) {
-    return { match: 'MATCH', score: 98, details: 'All name tokens match.' };
-  }
-
-  // 4. Initials Handling:
-  // If all main tokens match, and initials differ only by presence or position
-  // e.g. "Suresh Kumar R" vs "R Suresh Kumar" vs "Suresh Kumar"
-  const mainTargetSet = new Set(targetMainTokens);
-  const mainDocSet = new Set(docMainTokens);
-  const mainTokensMatch = targetMainTokens.length > 0 &&
-    docMainTokens.length > 0 &&
-    targetMainTokens.every(t => mainDocSet.has(t)) &&
-    docMainTokens.every(t => mainTargetSet.has(t));
-
-  if (mainTokensMatch) {
-    return {
-      match: 'MATCH',
-      score: 95,
-      details: 'All main name components match with minor initial variation.'
-    };
-  }
-
-  // Check if one has an initial and other has full word starting with that initial
-  if (targetMainTokens.length > 0 && docMainTokens.length > 0) {
-    let sharedMainCount = 0;
-    for (const t of targetMainTokens) {
-      if (docMainTokens.includes(t)) sharedMainCount++;
+  // 2. Phonetic normalized comparison (for cross-lingual names across Indian languages)
+  const phoneTarget = phoneticNormalize(normTarget);
+  const phoneDoc = phoneticNormalize(transDoc || normDoc);
+  if (phoneTarget && phoneDoc) {
+    if (phoneTarget === phoneDoc) {
+      return { match: 'MATCH', score: 98, details: 'Phonetic cross-script match.' };
     }
-
-    if (sharedMainCount >= Math.min(targetMainTokens.length, docMainTokens.length)) {
+    const phoneSim = stringSimilarity(phoneTarget, phoneDoc);
+    if (phoneSim >= 0.80) {
       return {
         match: 'MATCH',
-        score: 92,
-        details: 'Core names match.'
+        score: Math.round(phoneSim * 100),
+        details: `High phonetic similarity (${Math.round(phoneSim * 100)}%).`
       };
     }
   }
 
-  // 5. String Similarity / Spelling Variations
-  const fullSim = stringSimilarity(normTarget, normDoc);
-  if (fullSim >= 0.85) {
-    return {
-      match: 'MATCH',
-      score: Math.round(fullSim * 100),
-      details: `High name similarity (${Math.round(fullSim * 100)}%).`
-    };
-  }
+  // Compare against both normDoc and transDoc
+  const candidateDocs = [normDoc, transDoc].filter(Boolean);
 
-  // 6. Partial match check (at least one main word matches, or similarity 0.65 to 0.84)
-  let anySharedMain = false;
-  for (const t of targetMainTokens) {
-    for (const d of docMainTokens) {
-      if (t === d || stringSimilarity(t, d) >= 0.80) {
-        anySharedMain = true;
-        break;
+  for (const docStr of candidateDocs) {
+    // 3. Token Breakdown
+    const targetTokens = normTarget.split(' ').filter(Boolean);
+    const docTokens = docStr.split(' ').filter(Boolean);
+
+    const targetMainTokens = targetTokens.filter(t => t.length > 1);
+    const docMainTokens = docTokens.filter(t => t.length > 1);
+
+    // 4. Token set match (e.g. "Kumar Sharan" vs "Sharan Kumar")
+    const targetSet = new Set(targetTokens);
+    const docSet = new Set(docTokens);
+    const isSubset = targetTokens.every(t => docSet.has(t));
+    const isDocSubset = docTokens.every(t => targetSet.has(t));
+
+    if (isSubset && isDocSubset) {
+      return { match: 'MATCH', score: 98, details: 'All name tokens match.' };
+    }
+
+    // 5. Initials Handling:
+    // If all main tokens match, and initials differ only by presence or position
+    const mainTargetSet = new Set(targetMainTokens);
+    const mainDocSet = new Set(docMainTokens);
+    const mainTokensMatch = targetMainTokens.length > 0 &&
+      docMainTokens.length > 0 &&
+      targetMainTokens.every(t => mainDocSet.has(t)) &&
+      docMainTokens.every(t => mainTargetSet.has(t));
+
+    if (mainTokensMatch) {
+      return {
+        match: 'MATCH',
+        score: 95,
+        details: 'All main name components match with minor initial variation.'
+      };
+    }
+
+    // Check shared main tokens
+    if (targetMainTokens.length > 0 && docMainTokens.length > 0) {
+      let sharedMainCount = 0;
+      for (const t of targetMainTokens) {
+        if (docMainTokens.includes(t)) sharedMainCount++;
+      }
+
+      if (sharedMainCount >= Math.min(targetMainTokens.length, docMainTokens.length)) {
+        return {
+          match: 'MATCH',
+          score: 92,
+          details: 'Core names match.'
+        };
       }
     }
-    if (anySharedMain) break;
+
+    // 6. String Similarity / Spelling Variations
+    const fullSim = stringSimilarity(normTarget, docStr);
+    if (fullSim >= 0.85) {
+      return {
+        match: 'MATCH',
+        score: Math.round(fullSim * 100),
+        details: `High name similarity (${Math.round(fullSim * 100)}%).`
+      };
+    }
   }
 
-  if (anySharedMain || fullSim >= 0.65) {
+  // 7. Check full text containment
+  if (documentFullText) {
+    const normFull = normalizeName(documentFullText);
+    const transFull = normalizeName(transliterateIndicToLatin(documentFullText));
+    if (normFull.includes(normTarget) || transFull.includes(normTarget) ||
+        (phoneTarget && phoneticNormalize(transFull).includes(phoneTarget))) {
+      return { match: 'MATCH', score: 90, details: 'Target name found in document text.' };
+    }
+  }
+
+  // 8. Partial match check (similarity 0.65 to 0.84 on transliterated or direct)
+  const maxSim = Math.max(
+    stringSimilarity(normTarget, normDoc),
+    transDoc ? stringSimilarity(normTarget, transDoc) : 0,
+    phoneTarget && phoneDoc ? stringSimilarity(phoneTarget, phoneDoc) : 0
+  );
+
+  if (maxSim >= 0.65) {
     return {
       match: 'PARTIAL MATCH',
-      score: Math.round(Math.max(fullSim * 100, 65)),
-      details: `Partial name match (${Math.round(fullSim * 100)}%).`
+      score: Math.round(maxSim * 100),
+      details: `Partial name match (${Math.round(maxSim * 100)}%).`
     };
   }
 
-  // 7. Clearly different person!
+  // 9. Clearly different person!
   return {
     match: 'NOT MATCH',
-    score: Math.round(fullSim * 100),
+    score: Math.round(maxSim * 100),
     details: 'Name does not match.'
   };
 }
@@ -441,7 +510,8 @@ function compareNameComponents(targetName, documentName, documentFullText = '') 
  */
 function extractPincode(str) {
   if (!str) return '';
-  const m = str.match(/\b([1-9][0-9]{5})\b/);
+  const normalized = normalizeIndicNumerals(str);
+  const m = normalized.match(/\b([1-9][0-9]{5})\b/);
   return m ? m[1] : '';
 }
 
@@ -450,7 +520,8 @@ function extractPincode(str) {
  */
 function extractHouseNumber(str) {
   if (!str) return '';
-  const m = str.match(/\b(?:no\.?|door|flat|plot|house)?\s*([0-9]+[a-z]?[\/\-]?[0-9]*[a-z]?)\b/i);
+  const normalized = normalizeIndicNumerals(str);
+  const m = normalized.match(/\b(?:no\.?|door|flat|plot|house|எண்|सं|నెం|ಸಂ|നം)?\s*([0-9]+[a-z]?[\/\-]?[0-9]*[a-z]?)\b/i);
   return m ? m[1].toUpperCase() : '';
 }
 
@@ -459,7 +530,8 @@ function extractHouseNumber(str) {
  */
 function normalizeForComparison(str) {
   if (!str) return '';
-  return str
+  const normalized = normalizeIndicNumerals(str);
+  return normalized
     .toLowerCase()
     .replace(/[,\.\-\/\\#]/g, ' ')
     .replace(/\bst\b|\bst\.\b/g, 'street')
@@ -475,7 +547,7 @@ function normalizeForComparison(str) {
 /**
  * Compare target address against extracted document text component by component.
  * Evaluates: House Number, Street, Area, City, State, and Pincode.
- * Ignores casing, extra spaces, commas, line breaks, and common abbreviations.
+ * Supports cross-script phonetic matching (transliterated Indic text vs. English HR address).
  */
 function compareAddressComponents(targetAddress, documentText, extractedAddress) {
   if (!documentText || documentText.trim().length < 8) {
@@ -494,16 +566,25 @@ function compareAddressComponents(targetAddress, documentText, extractedAddress)
     };
   }
 
+  const normalizedDocText = normalizeIndicNumerals(documentText);
+  const normalizedExtracted = normalizeIndicNumerals(extractedAddress || '');
+
   const normTarget = normalizeForComparison(targetAddress);
-  const normDoc = normalizeForComparison(documentText);
+  const normDoc = normalizeForComparison(normalizedDocText);
   const rawTargetLower = (targetAddress || '').toLowerCase();
-  const rawDocLower = (documentText || '').toLowerCase();
+  const rawDocLower = normalizedDocText.toLowerCase();
+
+  // Transliterate Indic document text into phonetic Latin for cross-language matching
+  const transliteratedDoc = transliterateIndicToLatin(normalizedDocText);
+  const transliteratedExtracted = transliterateIndicToLatin(normalizedExtracted);
+  const transDocLower = transliteratedDoc.toLowerCase();
+  const normTransDoc = normalizeForComparison(transliteratedDoc);
 
   let totalScore = 0;
 
   // 1. PINCODE (25 pts)
   const targetPin = extractPincode(targetAddress);
-  const docPin = extractPincode(extractedAddress || documentText);
+  const docPin = extractPincode(normalizedExtracted || normalizedDocText);
   let pincodeStatus = 'NOT CHECKED';
 
   if (targetPin && docPin) {
@@ -515,7 +596,7 @@ function compareAddressComponents(targetAddress, documentText, extractedAddress)
       pincodeStatus = 'NOT MATCH';
     }
   } else if (targetPin) {
-    if (rawDocLower.includes(targetPin)) {
+    if (rawDocLower.includes(targetPin) || transDocLower.includes(targetPin)) {
       totalScore += 25;
       pincodeStatus = 'MATCH';
     } else {
@@ -530,13 +611,15 @@ function compareAddressComponents(targetAddress, documentText, extractedAddress)
   if (targetHouse) {
     const cleanHouse = targetHouse.toLowerCase().replace(/[\s\/\-]/g, '');
     const cleanDoc = rawDocLower.replace(/[\s\/\-]/g, '');
+    const cleanTransDoc = transDocLower.replace(/[\s\/\-]/g, '');
 
-    if (cleanDoc.includes(cleanHouse) || normDoc.includes(targetHouse.toLowerCase())) {
+    if (cleanDoc.includes(cleanHouse) || cleanTransDoc.includes(cleanHouse) ||
+        normDoc.includes(targetHouse.toLowerCase()) || normTransDoc.includes(targetHouse.toLowerCase())) {
       totalScore += 25;
       houseStatus = 'MATCH';
     } else {
       // Check if another explicit house number was detected
-      const docHouse = extractHouseNumber(extractedAddress);
+      const docHouse = extractHouseNumber(normalizedExtracted || transliteratedExtracted);
       if (docHouse && docHouse !== targetHouse) {
         totalScore -= 20; // Explicit mismatch
         houseStatus = 'NOT MATCH';
@@ -553,6 +636,7 @@ function compareAddressComponents(targetAddress, documentText, extractedAddress)
   // 3. STREET / ROAD (20 pts)
   let streetStatus = 'NOT MATCH';
   const cleanDocSpaceless = rawDocLower.replace(/\s+/g, '');
+  const cleanTransSpaceless = transDocLower.replace(/\s+/g, '');
   const streetTokens = targetAddress
     .split(/[\s,./-]+/)
     .map((w) => w.trim().toLowerCase())
@@ -560,8 +644,22 @@ function compareAddressComponents(targetAddress, documentText, extractedAddress)
 
   let matchedTokens = 0;
   for (const token of streetTokens) {
-    if (rawDocLower.includes(token) || cleanDocSpaceless.includes(token.replace(/\s+/g, ''))) {
+    const cleanToken = token.replace(/\s+/g, '');
+    if (
+      rawDocLower.includes(token) ||
+      cleanDocSpaceless.includes(cleanToken) ||
+      transDocLower.includes(token) ||
+      cleanTransSpaceless.includes(cleanToken)
+    ) {
       matchedTokens++;
+    } else {
+      // Fuzzy token check on transliterated text
+      for (const dWord of transDocLower.split(/\s+/)) {
+        if (dWord.length >= 4 && stringSimilarity(dWord, token) >= 0.80) {
+          matchedTokens++;
+          break;
+        }
+      }
     }
   }
 
@@ -584,12 +682,18 @@ function compareAddressComponents(targetAddress, documentText, extractedAddress)
   const areaKeywords = [
     'vinayagapuram', 'surapet', 'velmurugan', 'anna nagar', 't nagar', 'velachery',
     'ambattur', 'tambaram', 'guindy', 'porur', 'madhavaram', 'redhills', 'vadapalani',
-    'perambur', 'mylapore', 'alwarpet', 'adyar', 'kolathur', 'royapettah'
+    'perambur', 'mylapore', 'alwarpet', 'adyar', 'kolathur', 'royapettah', 'marathahalli',
+    'whitefield', 'koramangala', 'indiranagar', 'jayanagar', 'hitec city', 'gachibowli',
+    'madhapur', 'banjara hills', 'jubilee hills', 'andheri', 'bandra', 'borivali', 'rohini',
+    'dwarka', 'connaught place', 'saket'
   ];
 
   let areaMatched = false;
   for (const a of areaKeywords) {
-    if (rawTargetLower.includes(a) && (rawDocLower.includes(a) || cleanDocSpaceless.includes(a))) {
+    if (
+      rawTargetLower.includes(a) &&
+      (rawDocLower.includes(a) || cleanDocSpaceless.includes(a) || transDocLower.includes(a) || cleanTransSpaceless.includes(a))
+    ) {
       areaMatched = true;
       break;
     }
@@ -605,31 +709,67 @@ function compareAddressComponents(targetAddress, documentText, extractedAddress)
     }
   }
 
-  // 5. CITY (10 pts)
+  // 5. CITY (10 pts) - Multilingual dictionary across English, Hindi, Tamil, Telugu, Kannada, Malayalam
   let cityStatus = 'NOT MATCH';
-  const majorCities = [
-    'chennai', 'bengaluru', 'bangalore', 'hyderabad', 'mumbai', 'delhi',
-    'coimbatore', 'madurai', 'trichy', 'salem', 'tirunelveli', 'vellore'
+  const cityMultilingual = [
+    { en: 'chennai', aliases: ['chennai', 'madras', 'சென்னை', 'चेन्नई', 'మద్రాస్', 'చెన్నై', 'ಚೆನ್ನೈ', 'ചെന്നൈ'] },
+    { en: 'bengaluru', aliases: ['bengaluru', 'bangalore', 'बेंगलुरु', 'ಬೆಂಗಳೂರು', 'బెంగళూరు', 'ബംഗളൂരു', 'பெங்களூரு'] },
+    { en: 'hyderabad', aliases: ['hyderabad', 'हैदराबाद', 'హైదరాబాద్', 'ಹೈದರಾಬಾದ್', 'ഹൈദരാബാദ്', 'ஹைதராபாத்'] },
+    { en: 'mumbai', aliases: ['mumbai', 'bombay', 'मुंबई', 'ముంబై', 'ಮುಂಬೈ', 'മുംബൈ', 'மும்பை'] },
+    { en: 'delhi', aliases: ['delhi', 'new delhi', 'दिल्ली', 'नई दिल्ली', 'దిల్లీ', 'ದೆಹಲಿ', 'ഡൽഹി', 'தில்லி'] },
+    { en: 'coimbatore', aliases: ['coimbatore', 'kovai', 'கோயம்புத்தூர்', 'கோவை', 'कोयंबटूर'] },
+    { en: 'madurai', aliases: ['madurai', 'மதுரை', 'मदुरै'] },
+    { en: 'trichy', aliases: ['trichy', 'tiruchirappalli', 'திருச்சி', 'तिरुचिरापल्ली'] },
+    { en: 'salem', aliases: ['salem', 'சேலம்', 'सेलम'] },
+    { en: 'kochi', aliases: ['kochi', 'cochin', 'കൊച്ചി', 'कोच्चि'] },
+    { en: 'thiruvananthapuram', aliases: ['thiruvananthapuram', 'trivandrum', 'തിരുവനന്തപുരം'] },
+    { en: 'visakhapatnam', aliases: ['visakhapatnam', 'vizag', 'విశాఖపట్నం'] },
+    { en: 'vijayawada', aliases: ['vijayawada', 'విజయవాడ'] },
+    { en: 'mysuru', aliases: ['mysuru', 'mysore', 'ಮೈಸೂರು'] },
+    { en: 'pune', aliases: ['pune', 'पुणे'] },
+    { en: 'kolkata', aliases: ['kolkata', 'calcutta', 'कोलकाता'] }
   ];
 
-  for (const city of majorCities) {
-    if (rawTargetLower.includes(city) && (rawDocLower.includes(city) || cleanDocSpaceless.includes(city))) {
-      totalScore += 10;
-      cityStatus = 'MATCH';
-      break;
+  for (const cityObj of cityMultilingual) {
+    const isTargetCity = cityObj.aliases.some(alias => rawTargetLower.includes(alias));
+    if (isTargetCity) {
+      const isDocCity = cityObj.aliases.some(alias =>
+        rawDocLower.includes(alias) || cleanDocSpaceless.includes(alias.replace(/\s+/g, '')) ||
+        transDocLower.includes(alias) || cleanTransSpaceless.includes(alias.replace(/\s+/g, ''))
+      );
+      if (isDocCity) {
+        totalScore += 10;
+        cityStatus = 'MATCH';
+        break;
+      }
     }
   }
 
-  // 6. STATE (5 pts)
+  // 6. STATE (5 pts) - Multilingual dictionary
   let stateStatus = 'NOT MATCH';
-  const states = ['tamil nadu', 'tamilnadu', 'karnataka', 'kerala', 'andhra', 'telangana', 'maharashtra'];
-  for (const state of states) {
-    const cleanState = state.replace(/\s+/g, '');
-    if ((rawTargetLower.includes(state) || rawTargetLower.includes(cleanState)) &&
-        (rawDocLower.includes(state) || cleanDocSpaceless.includes(cleanState))) {
-      totalScore += 5;
-      stateStatus = 'MATCH';
-      break;
+  const stateMultilingual = [
+    { en: 'tamil nadu', aliases: ['tamil nadu', 'tamilnadu', 'தமிழ்நாடு', 'तमिलनाडु', 'తమిళనాడు', 'ತಮಿಳುನಾಡು', 'തമിഴ്നാട്'] },
+    { en: 'karnataka', aliases: ['karnataka', 'ಕರ್ನಾಟಕ', 'कर्नाटक', 'కర్ణాటక', 'കർണാടക', 'கர்நாடகா'] },
+    { en: 'kerala', aliases: ['kerala', 'കേരളം', 'केरल', 'కేరళ', 'ಕೇರಳ', 'கேரளா'] },
+    { en: 'andhra pradesh', aliases: ['andhra pradesh', 'andhra', 'ఆంధ్ర ప్రదేశ్', 'आंध्र प्रदेश', 'ಆಂಧ್ರ ಪ್ರದೇಶ', 'ആന്ധ്രാപ്രദേശ്'] },
+    { en: 'telangana', aliases: ['telangana', 'తెలంగాణ', 'तेलंगाना', 'ತೆಲಂಗಾಣ', 'തെലങ്കാന'] },
+    { en: 'maharashtra', aliases: ['maharashtra', 'महाराष्ट्र', 'మహారాష్ట్ర', 'ಮಹಾರಾಷ್ಟ್ರ', 'മഹാരാഷ്ട്ര'] },
+    { en: 'uttar pradesh', aliases: ['uttar pradesh', 'उत्तर प्रदेश', 'యు.పి'] },
+    { en: 'delhi', aliases: ['delhi', 'दिल्ली', 'దిల్లీ', 'ದೆಹಲಿ'] }
+  ];
+
+  for (const stObj of stateMultilingual) {
+    const isTargetState = stObj.aliases.some(alias => rawTargetLower.includes(alias));
+    if (isTargetState) {
+      const isDocState = stObj.aliases.some(alias =>
+        rawDocLower.includes(alias) || cleanDocSpaceless.includes(alias.replace(/\s+/g, '')) ||
+        transDocLower.includes(alias) || cleanTransSpaceless.includes(alias.replace(/\s+/g, ''))
+      );
+      if (isDocState) {
+        totalScore += 5;
+        stateStatus = 'MATCH';
+        break;
+      }
     }
   }
 
@@ -664,6 +804,9 @@ function compareAddressComponents(targetAddress, documentText, extractedAddress)
 
 /**
  * Main Automatic Address Proof Matching Function
+ * Supports all 6 Indian languages (English, Hindi, Tamil, Telugu, Kannada, Malayalam)
+ * Detects document language, extracts name & address, compares with HR records, and routes
+ * unclear / failed OCR to REVIEW REQUIRED.
  *
  * @param {Object} employee - Employee database record
  * @param {Object} progress - Verification progress record
@@ -679,7 +822,11 @@ async function performDocumentAddressMatch(employee, progress) {
       employeeConfirmedAddressMatch: 'NOT MATCH',
       overallResult: 'REVIEW REQUIRED',
       statusMessage: 'NO DOCUMENT ATTACHED',
-      details: 'No address proof document has been uploaded for this case.'
+      details: 'No address proof document has been uploaded for this case.',
+      languageDetection: null,
+      detectedLanguages: [],
+      isMixedLanguage: false,
+      languageSummary: 'Unknown'
     };
   }
 
@@ -710,6 +857,8 @@ async function performDocumentAddressMatch(employee, progress) {
   const empConfirmedName = progress?.submitted_name || hrName;
 
   const combinedDocText = [rawDocText, backDocText].filter(Boolean).join('\n');
+  const langDetection = detectDocumentLanguage(combinedDocText);
+
   const extractedAddress = extractAddressFromText(combinedDocText) || extractAddressFromText(backDocText) || extractAddressFromText(rawDocText);
   const extractedName = extractNameFromText(combinedDocText, progress?.document_type, [hrName, empConfirmedName]) ||
                         extractNameFromText(rawDocText, progress?.document_type, [hrName, empConfirmedName]) ||
@@ -735,6 +884,7 @@ async function performDocumentAddressMatch(employee, progress) {
   const isNameNotMatch = isHrNameNotMatch && isEmpNameNotMatch;
   const nameOverallStatus = isNameMatch ? 'MATCH' : isNamePartial ? 'PARTIAL' : 'NOT MATCH';
 
+  // If OCR failed or address could not be read clearly, route for HR/BGV review
   if (!addressCouldBeRead) {
     return {
       success: true,
@@ -744,6 +894,10 @@ async function performDocumentAddressMatch(employee, progress) {
       backFileName: progress.document_back_original_name || (backDocPath ? path.basename(backDocPath) : null),
       extractedAddress: 'Address text could not be clearly extracted from document.',
       extractedName: extractedName || 'Name text could not be clearly extracted.',
+      languageDetection: langDetection,
+      detectedLanguages: langDetection.languages,
+      isMixedLanguage: langDetection.isMixedLanguage,
+      languageSummary: langDetection.languageSummary,
       hrNameMatch: hrNameComparison.match,
       hrNameScore: hrNameComparison.score,
       employeeConfirmedNameMatch: empNameComparison.match,
@@ -751,8 +905,9 @@ async function performDocumentAddressMatch(employee, progress) {
       nameMatchStatus: nameOverallStatus,
       hrAddressMatch: 'NOT MATCH',
       employeeConfirmedAddressMatch: 'NOT MATCH',
-      overallResult: isNameNotMatch ? 'NOT MATCHED' : 'REVIEW REQUIRED',
-      statusMessage: isNameNotMatch ? 'NAME NOT MATCHED' : 'ADDRESS COULD NOT BE READ – REVIEW REQUIRED',
+      overallResult: 'REVIEW REQUIRED',
+      statusMessage: 'ADDRESS COULD NOT BE READ – REVIEW REQUIRED',
+      requiresManualReview: true,
       readable: false,
       components: {
         name: {
@@ -781,7 +936,7 @@ async function performDocumentAddressMatch(employee, progress) {
 
   // Overall Result Evaluation considering BOTH Name and Address:
   // - If both match: MATCHED
-  // - If one is partial (and none is clearly NOT MATCH): REVIEW REQUIRED
+  // - If one is partial or needs manual verification: REVIEW REQUIRED
   // - If Name or Address clearly does not match: NOT MATCHED
   let overallResult = 'REVIEW REQUIRED';
   let statusMessage = 'REVIEW REQUIRED';
@@ -811,6 +966,10 @@ async function performDocumentAddressMatch(employee, progress) {
     backFileName: progress.document_back_original_name || (backDocPath ? path.basename(backDocPath) : null),
     extractedAddress: extractedAddress || rawDocText.substring(0, 160).trim(),
     extractedName: extractedName || 'Name text could not be clearly extracted.',
+    languageDetection: langDetection,
+    detectedLanguages: langDetection.languages,
+    isMixedLanguage: langDetection.isMixedLanguage,
+    languageSummary: langDetection.languageSummary,
     hrNameMatch: hrNameComparison.match,
     hrNameScore: hrNameComparison.score,
     employeeConfirmedNameMatch: empNameComparison.match,
@@ -822,6 +981,7 @@ async function performDocumentAddressMatch(employee, progress) {
     employeeMatchScore: empComparison.score,
     overallResult,
     statusMessage,
+    requiresManualReview: overallResult === 'REVIEW REQUIRED',
     readable: true,
     components: {
       name: {

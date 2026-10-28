@@ -1,9 +1,6 @@
-const { createWorker } = require('tesseract.js');
 const path = require('path');
 const fs = require('fs');
-
-let sharedWorker = null;
-let workerInitPromise = null;
+const { getIndianLanguageWorker } = require('./indianLanguageOcr');
 
 function isValidImageBuffer(buf) {
   if (!buf || !Buffer.isBuffer(buf) || buf.length < 50) return false;
@@ -19,22 +16,7 @@ function isValidImageBuffer(buf) {
 }
 
 async function getOcrWorker() {
-  if (sharedWorker) return sharedWorker;
-  if (!workerInitPromise) {
-    workerInitPromise = (async () => {
-      try {
-        const worker = await createWorker('eng');
-        sharedWorker = worker;
-        return worker;
-      } catch (err) {
-        console.warn('Failed to initialize shared Tesseract worker:', err.message);
-        sharedWorker = null;
-        workerInitPromise = null;
-        return null;
-      }
-    })();
-  }
-  return workerInitPromise;
+  return getIndianLanguageWorker();
 }
 
 /**
@@ -195,9 +177,9 @@ async function validateImage({ imageBuffer, photoType, clientMetrics = {}, hrAdd
     return result;
   }
 
-  // OCR extraction for text/content analysis where applicable
+  // OCR extraction for text/content analysis where applicable (street board, door selfie, address proof)
   let ocrText = clientMetrics.ocrText || '';
-  if (!ocrText && isValidImageBuffer(imageBuffer)) {
+  if (!ocrText && isValidImageBuffer(imageBuffer) && ['street', 'door_selfie', 'address_proof'].includes(photoType)) {
     try {
       const worker = await getOcrWorker();
       if (worker) {
@@ -221,7 +203,8 @@ async function validateImage({ imageBuffer, photoType, clientMetrics = {}, hrAdd
       street: 'Street Board',
       building: 'Full Building',
       door_selfie: 'Door Number Selfie',
-      selfie: 'Live Selfie'
+      selfie: 'Live Selfie',
+      joint_selfie: 'TL & Employee Joint Selfie'
     }[photoType] || 'Evidence photo';
 
     result.valid = false;
@@ -232,9 +215,31 @@ async function validateImage({ imageBuffer, photoType, clientMetrics = {}, hrAdd
 
   // 5. Type-Specific Validations
   switch (photoType) {
+    case 'joint_selfie': {
+      // Joint Selfie: BOTH Team Leader and Employee must appear together in the same photo with both faces clearly visible
+      const faceCount = clientMetrics.faceCount !== undefined ? clientMetrics.faceCount : (faceDetected === true ? 1 : 0);
+      if (faceCount < 2 || faceDetected !== true) {
+        result.valid = false;
+        const msg = faceCount === 1
+          ? 'Only one face detected. Both TL and Employee required'
+          : (faceReason === 'hair_only'
+            ? 'Hair-only captured. Both faces required'
+            : faceReason === 'partial_face'
+            ? 'Partial face captured. Full faces required'
+            : 'Both TL and Employee faces must be visible');
+        result.checks.content = { passed: false, message: msg };
+        result.error = faceCount === 1
+          ? 'Only one face detected. Both the Team Leader and the Employee must appear together in the photo, with both faces clearly visible.'
+          : 'Both Team Leader and Employee must appear together in the same photo with both faces clearly visible. If either face is missing or unclear, retake is required.';
+        return result;
+      }
+      result.checks.content = { passed: true, message: 'Both Team Leader and Employee faces clearly verified' };
+      break;
+    }
+
     case 'selfie': {
       // Live Selfie: Full employee face must be clearly visible (no hair-only or partial face)
-      if (faceDetected === false) {
+      if (faceDetected !== true) {
         result.valid = false;
         const msg = faceReason === 'hair_only'
           ? 'Hair-only captured. Full face required'
@@ -255,9 +260,10 @@ async function validateImage({ imageBuffer, photoType, clientMetrics = {}, hrAdd
       result.doorNumbersFound = doorNumbers;
 
       const hasDigitsOrNumber = doorNumbers.length > 0 || /\d+/.test(ocrText);
+      const isFacePresent = faceDetected === true;
 
       // Both missing
-      if (faceDetected === false && !hasDigitsOrNumber) {
+      if (!isFacePresent && !hasDigitsOrNumber) {
         result.valid = false;
         result.checks.content = { passed: false, message: 'Both face and door number missing' };
         result.error = 'Door Number Selfie must clearly show BOTH your face and readable door/house number. Partial face or hair-only, or missing number is not accepted.';
@@ -265,7 +271,7 @@ async function validateImage({ imageBuffer, photoType, clientMetrics = {}, hrAdd
       }
 
       // Face missing or hair-only
-      if (faceDetected === false) {
+      if (!isFacePresent) {
         result.valid = false;
         const msg = faceReason === 'hair_only'
           ? 'Hair-only captured. Employee face not visible'

@@ -2,10 +2,10 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const { query } = require('../db/database');
-const { authenticateAdmin, requireRoles } = require('../middleware/auth');
+const { authenticateAdmin, requireRoles, requirePermission, checkUserHasPermission, isTeamLeader } = require('../middleware/auth');
 
 // GET /api/queue - Query BGV Verification Queue
-router.get('/', authenticateAdmin, async (req, res) => {
+router.get('/', authenticateAdmin, requirePermission('view_queue', 'review_cases'), async (req, res) => {
   try {
     const {
       status,
@@ -58,8 +58,11 @@ router.get('/', authenticateAdmin, async (req, res) => {
       params.push(reviewerId);
     }
 
-    // Role-specific view filter: If BGV Reviewer, show their assigned cases by default if specified
-    if (req.user.role === 'BGV Reviewer' && req.query.myQueue === 'true') {
+    // TL access restriction: Team Leaders can ONLY see cases assigned directly to them
+    if (isTeamLeader(req.user)) {
+      whereClauses.push('(vc.assigned_reviewer_id = ? OR (vc.assigned_reviewer_id IS NULL AND e.assigned_reviewer_id = ?))');
+      params.push(req.user.id, req.user.id);
+    } else if (req.user.role === 'BGV Reviewer' && req.query.myQueue === 'true') {
       whereClauses.push('(vc.assigned_reviewer_id = ? OR vc.assigned_reviewer_id IS NULL)');
       params.push(req.user.id);
     }
@@ -155,7 +158,7 @@ router.get('/', authenticateAdmin, async (req, res) => {
 });
 
 // POST /api/queue/assign - Assign BGV Reviewer
-router.post('/assign', authenticateAdmin, async (req, res) => {
+router.post('/assign', authenticateAdmin, requirePermission('assign_reviewer'), async (req, res) => {
   try {
     const { caseReferences, employeeIds, reviewerId } = req.body;
 
@@ -196,7 +199,7 @@ router.post('/assign', authenticateAdmin, async (req, res) => {
 });
 
 // DELETE /api/queue/:caseRefOrEmpId - Delete Case from Verification / Reverification Queue (Admin Only)
-router.delete('/:caseRefOrEmpId', authenticateAdmin, requireRoles('Super Admin', 'HR/Admin'), async (req, res) => {
+router.delete('/:caseRefOrEmpId', authenticateAdmin, requirePermission('delete_cases'), async (req, res) => {
   try {
     const { caseRefOrEmpId } = req.params;
     const { deleteEmployee } = req.query; // If true, deletes employee record as well
@@ -212,11 +215,15 @@ router.delete('/:caseRefOrEmpId', authenticateAdmin, requireRoles('Super Admin',
     if (!caseRecord) {
       // Check if employee exists in employees
       const emp = await query.get(
-        'SELECT employee_id, employee_name, verification_status FROM employees WHERE employee_id = ? OR id = ?',
+        'SELECT employee_id, employee_name, verification_status, assigned_reviewer_id FROM employees WHERE employee_id = ? OR id = ?',
         [caseRefOrEmpId, caseRefOrEmpId]
       );
       if (!emp) {
         return res.status(404).json({ error: 'Case or employee record not found.' });
+      }
+
+      if (isTeamLeader(req.user) && emp.assigned_reviewer_id !== req.user.id) {
+        return res.status(403).json({ error: 'Access restricted: You cannot delete cases not assigned to you.' });
       }
 
       // Reset employee verification status to 'Not Started'
@@ -247,6 +254,10 @@ router.delete('/:caseRefOrEmpId', authenticateAdmin, requireRoles('Super Admin',
 
     const empId = caseRecord.employee_id;
     const caseRef = caseRecord.case_reference;
+
+    if (isTeamLeader(req.user) && caseRecord.assigned_reviewer_id !== req.user.id) {
+      return res.status(403).json({ error: 'Access restricted: You cannot delete cases not assigned to you.' });
+    }
 
     // If deleteEmployee flag is passed, delete employee completely
     if (deleteEmployee === 'true') {

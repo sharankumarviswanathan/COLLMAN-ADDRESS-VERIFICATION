@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { AddEmployeeModal } from './AddEmployeeModal';
 import { BulkUploadModal } from './BulkUploadModal';
+import { EditEmployeeModal } from './EditEmployeeModal';
 import {
   Users,
   UserPlus,
@@ -12,6 +13,7 @@ import {
   Filter,
   Download,
   Eye,
+  Pencil,
   ExternalLink,
   ChevronLeft,
   ChevronRight,
@@ -25,17 +27,18 @@ import {
 export function EmployeeMaster() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const isAdmin = ['Super Admin', 'HR/Admin'].includes(user?.role);
+  const { user, hasPermission, hasAnyPermission, isTeamLeader } = useAuth();
+  const isAdmin = user?.role === 'Super Admin' || ['Super Admin', 'HR/Admin'].includes(user?.role);
 
   const [employees, setEmployees] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, total: 0, limit: 15, totalPages: 1 });
   const [loading, setLoading] = useState(true);
-  const [masters, setMasters] = useState({ branches: [], departments: [], locations: [], reviewers: [] });
+  const [masters, setMasters] = useState({ branches: [], departments: [], locations: [], reviewers: [], teamLeaders: [], managers: [] });
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(searchParams.get('action') === 'add');
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState(null);
   const [selectedEmpDetail, setSelectedEmpDetail] = useState(null);
   const [isDetailDrawerOpen, setIsDetailDrawerOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -186,13 +189,18 @@ export function EmployeeMaster() {
       {/* Top Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '22px', flexWrap: 'wrap', gap: '14px' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--primary)', letterSpacing: '-0.02em', margin: 0 }}>
               Employee Master
             </h1>
             <span style={{ fontSize: '0.72rem', fontWeight: 600, backgroundColor: 'var(--primary-light)', color: 'var(--primary)', padding: '2px 8px', borderRadius: 'var(--radius-full)', border: '1px solid var(--primary-subtle)' }}>
               {pagination.total} Records
             </span>
+            {isTeamLeader && (
+              <span className="badge badge-warning" style={{ fontSize: '0.72rem', fontWeight: 600 }}>
+                Showing Assigned Records Only
+              </span>
+            )}
           </div>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '3px' }}>
             HR Master Records for Address & Background Verification Lifecycle
@@ -200,34 +208,40 @@ export function EmployeeMaster() {
         </div>
 
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={handleExportMaster}
-            style={{ boxShadow: 'var(--shadow-xs)', display: 'flex', alignItems: 'center', gap: '6px' }}
-          >
-            <Download size={14} color="var(--text-muted)" />
-            <span>Export to Download Area</span>
-          </button>
+          {hasAnyPermission('export_employees', 'download_reports') && (
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={handleExportMaster}
+              style={{ boxShadow: 'var(--shadow-xs)', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <Download size={14} color="var(--text-muted)" />
+              <span>Export to Download Area</span>
+            </button>
+          )}
 
-          <button
-            id="btn-bulk-upload-employees"
-            className="btn btn-secondary btn-sm"
-            onClick={() => setIsBulkModalOpen(true)}
-            style={{ boxShadow: 'var(--shadow-xs)', display: 'flex', alignItems: 'center', gap: '6px' }}
-          >
-            <UploadCloud size={15} color="var(--accent)" />
-            <span>Bulk Upload (Excel / CSV)</span>
-          </button>
+          {hasAnyPermission('upload_employees', 'bulk_upload') && (
+            <button
+              id="btn-bulk-upload-employees"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setIsBulkModalOpen(true)}
+              style={{ boxShadow: 'var(--shadow-xs)', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <UploadCloud size={15} color="var(--accent)" />
+              <span>Bulk Upload (Excel / CSV)</span>
+            </button>
+          )}
 
-          <button
-            id="btn-add-employee"
-            className="btn btn-primary btn-sm"
-            onClick={() => setIsAddModalOpen(true)}
-            style={{ boxShadow: 'var(--shadow-sm)', display: 'flex', alignItems: 'center', gap: '6px' }}
-          >
-            <UserPlus size={14} />
-            <span>Add Employee</span>
-          </button>
+          {hasPermission('create_employee') && (
+            <button
+              id="btn-add-employee"
+              className="btn btn-primary btn-sm"
+              onClick={() => setIsAddModalOpen(true)}
+              style={{ boxShadow: 'var(--shadow-sm)', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <UserPlus size={14} />
+              <span>Add Employee</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -310,7 +324,7 @@ export function EmployeeMaster() {
       {/* Employees Table */}
       <div className="table-container">
         <div className="table-header-bar">
-          <div style={{ fontSize: '0.92rem', fontWeight: 700, color: 'var(--primary)' }}>
+          <div style={{ fontSize: '0.92rem', fontWeight: 700, color: 'var(--text-main)' }}>
             Employee Master Directory
           </div>
           <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
@@ -360,8 +374,8 @@ export function EmployeeMaster() {
                           height: 34,
                           borderRadius: 'var(--radius-sm)',
                           background: 'linear-gradient(135deg, rgba(216, 180, 254, 0.25) 0%, rgba(168, 85, 247, 0.15) 100%)',
-                          border: '1px solid rgba(216, 180, 254, 0.3)',
-                          color: '#FFFFFF',
+                          border: '1px solid var(--border-color)',
+                          color: 'var(--text-accent)',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -396,7 +410,11 @@ export function EmployeeMaster() {
                     </td>
                     <td>
                       <div style={{ fontSize: '0.84rem', fontWeight: 500 }}>{emp.mobile_number || '—'}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{emp.email_id || '—'}</div>
+                      {(emp.team_leader || emp.reporting_manager) ? (
+                        <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                          {emp.team_leader ? `TL: ${emp.team_leader}` : `Mgr: ${emp.reporting_manager}`}
+                        </div>
+                      ) : null}
                     </td>
                     <td style={{ fontSize: '0.84rem' }}>{emp.date_of_joining || '—'}</td>
                     <td style={{ fontSize: '0.84rem', fontWeight: 500 }}>{emp.department || '—'}</td>
@@ -422,7 +440,20 @@ export function EmployeeMaster() {
                           <span>View</span>
                         </button>
 
-                        {emp.verification_status === 'Pending BGV Review' && (
+                        {hasPermission('edit_employee') && (
+                          <button
+                            id={`btn-edit-emp-${emp.employee_id}`}
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => setEditingEmployee(emp)}
+                            title="Edit Employee Details"
+                            style={{ padding: '5px 10px', fontSize: '0.78rem', color: 'var(--primary)', borderColor: 'var(--border-color)' }}
+                          >
+                            <Pencil size={13} />
+                            <span>Edit</span>
+                          </button>
+                        )}
+
+                        {emp.verification_status === 'Pending BGV Review' && hasAnyPermission('review_cases', 'approve_cases', 'reject_cases', 'make_decision') && (
                           <button
                             className="btn btn-primary btn-sm"
                             onClick={() => navigate(`/admin/review/${emp.employee_id}`)}
@@ -434,7 +465,7 @@ export function EmployeeMaster() {
                           </button>
                         )}
 
-                        {isAdmin && (
+                        {hasPermission('delete_employee') && (
                           <button
                             id={`btn-delete-emp-${emp.employee_id}`}
                             className="btn btn-secondary btn-sm"
@@ -530,6 +561,14 @@ export function EmployeeMaster() {
                   <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Date of Joining</span>
                   <div style={{ fontWeight: 600 }}>{selectedEmpDetail.employee.date_of_joining}</div>
                 </div>
+                <div>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Manager</span>
+                  <div style={{ fontWeight: 600 }}>{selectedEmpDetail.employee.reporting_manager || '—'}</div>
+                </div>
+                <div>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Team Leader</span>
+                  <div style={{ fontWeight: 600 }}>{selectedEmpDetail.employee.team_leader || '—'}</div>
+                </div>
               </div>
 
               <div style={{ backgroundColor: 'var(--bg-subtle)', padding: '14px', borderRadius: 'var(--radius-md)', marginBottom: '16px' }}>
@@ -565,13 +604,43 @@ export function EmployeeMaster() {
               </div>
             </div>
 
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setIsDetailDrawerOpen(false)}>
+            <div className="modal-footer" style={{ justifyContent: 'space-between' }}>
+              <div>
+                {hasPermission('edit_employee') && (
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={() => {
+                      const target = selectedEmpDetail.employee;
+                      setIsDetailDrawerOpen(false);
+                      setEditingEmployee(target);
+                    }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 14px' }}
+                  >
+                    <Pencil size={14} />
+                    <span>Edit Profile Details</span>
+                  </button>
+                )}
+              </div>
+              <button className="btn btn-secondary btn-sm" onClick={() => setIsDetailDrawerOpen(false)} style={{ padding: '7px 16px' }}>
                 Close
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Edit Employee Modal */}
+      {editingEmployee && (
+        <EditEmployeeModal
+          isOpen={Boolean(editingEmployee)}
+          employee={editingEmployee}
+          masters={masters}
+          onClose={() => setEditingEmployee(null)}
+          onUpdated={() => {
+            setEditingEmployee(null);
+            loadEmployees();
+          }}
+        />
       )}
 
       {/* Add Employee Modal */}

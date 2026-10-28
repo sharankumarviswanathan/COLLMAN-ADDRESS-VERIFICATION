@@ -43,7 +43,7 @@ export function StepWelcome() {
           <strong>Welcome to Collman Services Address Verification.</strong>
         </p>
         <p style={{ marginBottom: '10px', color: '#475569' }}>
-          Please keep your <strong>Employee ID</strong> ready and complete the verification while you are available at your <strong>current residence</strong>.
+          Please keep your <strong>TL Employee ID</strong> and <strong>Agent Employee ID</strong> ready and complete the verification while you are available at your <strong>current residence</strong>.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#4F46E5', fontWeight: 700, fontSize: '0.88rem' }}>
           <Clock size={16} />

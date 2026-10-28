@@ -1,11 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const { query } = require('../db/database');
-const { authenticateAdmin } = require('../middleware/auth');
+const { authenticateAdmin, requirePermission, isTeamLeader } = require('../middleware/auth');
 const { generateExcelReport } = require('../utils/excelGenerator');
 
 // POST /api/reports/generate - Generate requested report and output directly to internal Download Area
-router.post('/generate', authenticateAdmin, async (req, res) => {
+router.post('/generate', authenticateAdmin, requirePermission('view_reports', 'export_reports'), async (req, res) => {
   try {
     const { reportType, branch, department, location, startDate, endDate, status } = req.body;
 
@@ -40,6 +40,12 @@ router.post('/generate', authenticateAdmin, async (req, res) => {
     if (endDate) {
       whereClauses.push('e.date_of_joining <= ?');
       params.push(endDate);
+    }
+
+    // TL access restriction: TL only exports records assigned to them
+    if (isTeamLeader(req.user)) {
+      whereClauses.push('e.assigned_reviewer_id = ?');
+      params.push(req.user.id);
     }
 
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';

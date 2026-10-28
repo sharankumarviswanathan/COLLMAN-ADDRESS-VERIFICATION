@@ -3,10 +3,10 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const { query } = require('../db/database');
-const { authenticateAdmin, requireRoles } = require('../middleware/auth');
+const { authenticateAdmin, requireRoles, requirePermission } = require('../middleware/auth');
 
 // GET /api/downloads - List all internal Download Area files
-router.get('/', authenticateAdmin, async (req, res) => {
+router.get('/', authenticateAdmin, requirePermission('download_reports'), async (req, res) => {
   try {
     const { category, fileType, search, page = 1, limit = 20 } = req.query;
 
@@ -65,7 +65,7 @@ router.get('/', authenticateAdmin, async (req, res) => {
 });
 
 // GET /api/downloads/:id/file - Download a specific file
-router.get('/:id/file', authenticateAdmin, async (req, res) => {
+router.get('/:id/file', authenticateAdmin, requirePermission('download_reports'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -103,7 +103,7 @@ router.get('/:id/file', authenticateAdmin, async (req, res) => {
 });
 
 // DELETE /api/downloads/:id - Remove file from Download Area
-router.delete('/:id', authenticateAdmin, requireRoles('Super Admin', 'HR/Admin'), async (req, res) => {
+router.delete('/:id', authenticateAdmin, requirePermission('delete_reports'), async (req, res) => {
   try {
     const { id } = req.params;
 

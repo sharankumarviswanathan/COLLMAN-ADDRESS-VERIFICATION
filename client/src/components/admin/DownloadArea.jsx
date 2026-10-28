@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import { Download, Trash2, Search, FileText, FileSpreadsheet, RefreshCw, ChevronLeft, ChevronRight, HardDrive } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 
 export function DownloadArea() {
+  const { user, hasPermission } = useAuth();
   const [files, setFiles] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, total: 0, limit: 15, totalPages: 1 });
   const [loading, setLoading] = useState(true);
@@ -271,14 +273,16 @@ export function DownloadArea() {
                           <span>Download</span>
                         </button>
 
-                        <button
-                          className="btn btn-secondary btn-sm"
-                          style={{ color: 'var(--danger)', borderColor: 'var(--danger-border)', padding: '5px 9px', fontSize: '0.78rem' }}
-                          onClick={() => handleDelete(file.id, file.file_name)}
-                          title="Delete File Permanently"
-                        >
-                          <Trash2 size={13} />
-                        </button>
+                        {hasPermission('delete_reports') && (
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            style={{ color: 'var(--danger)', borderColor: 'var(--danger-border)', padding: '5px 9px', fontSize: '0.78rem' }}
+                            onClick={() => handleDelete(file.id, file.file_name)}
+                            title="Delete File Permanently"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

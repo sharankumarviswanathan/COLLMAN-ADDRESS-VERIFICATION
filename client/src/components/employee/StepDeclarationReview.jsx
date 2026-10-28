@@ -20,7 +20,8 @@ export function StepDeclarationReview() {
     { id: 8, label: 'Full Building Photo Captured', done: progress.housePhotoCaptured },
     { id: 9, label: 'Door Number Selfie Captured', done: progress.doorPhotoCaptured },
     { id: 10, label: 'Live Selfie Captured', done: progress.selfieCaptured },
-    { id: 11, label: 'Address Proof Uploaded', done: progress.addressProofUploaded }
+    { id: 11, label: 'Address Proof Uploaded', done: progress.addressProofUploaded },
+    { id: 12, label: 'TL & Employee Joint Selfie Captured', done: progress.jointSelfieCaptured }
   ];
 
   const allCompleted = checklist.every((item) => item.done);
@@ -28,6 +29,11 @@ export function StepDeclarationReview() {
   async function handleFinalSubmit() {
     if (!confirmed) {
       setErrorMsg('Please accept the declaration to submit your verification.');
+      return;
+    }
+
+    if (!progress.jointSelfieCaptured) {
+      setErrorMsg('Please complete the mandatory TL & Employee Joint Selfie before final submission.');
       return;
     }
 
@@ -43,7 +49,7 @@ export function StepDeclarationReview() {
       const res = await api.verify.submit();
       setSubmissionResult(res);
       setShowConfirmModal(false);
-      nextStep(); // moves to step 10 (StepSuccess)
+      nextStep(); // moves to step 14 (StepSuccess)
     } catch (err) {
       console.error('Final submit error:', err);
       setErrorMsg(err.message || 'Submission failed. Please try again.');

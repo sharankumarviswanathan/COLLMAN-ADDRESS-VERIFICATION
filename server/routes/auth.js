@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const { query } = require('../db/database');
 const { generateAdminToken, authenticateAdmin } = require('../middleware/auth');
+const { ALL_PERMISSION_KEYS, DEFAULT_ROLE_PERMISSIONS } = require('../utils/permissions');
 
 // POST /api/auth/login - Secure Internal User Login
 router.post('/login', async (req, res) => {
@@ -44,6 +45,22 @@ router.post('/login', async (req, res) => {
 
     const token = generateAdminToken(user);
 
+    // Retrieve permissions for user role
+    let permissions = [];
+    if (user.role === 'Super Admin') {
+      permissions = [...ALL_PERMISSION_KEYS];
+    } else {
+      const perms = await query.all(
+        'SELECT permission_key FROM role_permissions WHERE role_name = ?',
+        [user.role]
+      );
+      if (perms && perms.length > 0) {
+        permissions = perms.map((p) => p.permission_key);
+      } else if (DEFAULT_ROLE_PERMISSIONS[user.role]) {
+        permissions = [...DEFAULT_ROLE_PERMISSIONS[user.role]];
+      }
+    }
+
     // Audit log successful login
     await query.run(
       `INSERT INTO audit_logs (actor_type, actor_id, actor_name, action, ip_address, details)
@@ -61,7 +78,8 @@ router.post('/login', async (req, res) => {
         fullName: user.full_name,
         role: user.role,
         branch: user.branch,
-        department: user.department
+        department: user.department,
+        permissions
       }
     });
   } catch (err) {
@@ -80,7 +98,8 @@ router.get('/me', authenticateAdmin, async (req, res) => {
       fullName: req.user.full_name,
       role: req.user.role,
       branch: req.user.branch,
-      department: req.user.department
+      department: req.user.department,
+      permissions: req.user.permissions || []
     }
   });
 });

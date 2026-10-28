@@ -1,38 +1,13 @@
 const fs = require('fs');
 const path = require('path');
-const { createWorker } = require('tesseract.js');
+const {
+  getIndianLanguageWorker,
+  getDualLanguageWorker,
+  detectDocumentLanguage,
+  normalizeIndicNumerals
+} = require('./indianLanguageOcr');
 const { extractTextFromPdfBuffer } = require('./documentAddressMatcher');
 const { compareAddressComponents } = require('./documentAddressMatcher');
-
-let dualLanguageWorker = null;
-let workerInitializing = null;
-
-/**
- * Get or initialize shared Tesseract worker supporting English and Tamil
- */
-async function getDualLanguageWorker() {
-  if (dualLanguageWorker) return dualLanguageWorker;
-  if (!workerInitializing) {
-    workerInitializing = (async () => {
-      try {
-        const worker = await createWorker(['eng', 'tam']);
-        dualLanguageWorker = worker;
-        return worker;
-      } catch (err) {
-        console.warn('Failed to initialize Tesseract with eng+tam, falling back to eng:', err.message);
-        try {
-          const fallbackWorker = await createWorker('eng');
-          dualLanguageWorker = fallbackWorker;
-          return fallbackWorker;
-        } catch (e) {
-          console.error('Fatal: Could not initialize Tesseract worker:', e.message);
-          return null;
-        }
-      }
-    })();
-  }
-  return workerInitializing;
-}
 
 /**
  * Supported Document Types
@@ -47,7 +22,8 @@ const DOCUMENT_TYPES = {
 };
 
 /**
- * Document Type Identification Signatures (English & Tamil keywords and patterns)
+ * Document Type Identification Signatures
+ * Supports English, Hindi, Tamil, Telugu, Kannada, and Malayalam keywords and patterns.
  */
 const DOC_SIGNATURES = {
   [DOCUMENT_TYPES.AADHAAR]: {
@@ -68,6 +44,17 @@ const DOC_SIGNATURES = {
       'year of birth',
       'yob:'
     ],
+    keywordsHi: [
+      'भारतीय विशिष्ट पहचान प्राधिकरण',
+      'भारत सरकार',
+      'आधार',
+      'मेरा आधार मेरी पहचान',
+      'जन्म तिथि',
+      'पुरुष',
+      'महिला',
+      'नामांकन संख्या',
+      'पता'
+    ],
     keywordsTa: [
       'இந்திய தனித்துவ அடையாள ஆணையம்',
       'இந்திய அரசு',
@@ -76,14 +63,62 @@ const DOC_SIGNATURES = {
       'பிறந்த தேதி',
       'ஆண்',
       'பெண்',
-      'பதிவு எண்'
+      'பதிவு எண்',
+      'முகவரி'
+    ],
+    keywordsTe: [
+      'భారత విశిష్ట గుర్తింపు ప్రాధికార సంస్థ',
+      'భారత ప్రభుత్వం',
+      'ఆధార్',
+      'నా ఆధార్ నా గుర్తింపు',
+      'పుట్టిన తేదీ',
+      'పురుషుడు',
+      'స్త్రీ',
+      'నమోదు సంఖ్య',
+      'చిరునామా'
+    ],
+    keywordsKn: [
+      'ಭಾರತೀಯ ವಿಶಿಷ್ಟ ಗುರುತಿನ ಪ್ರಾಧಿಕಾರ',
+      'ಭಾರತ ಸರ್ಕಾರ',
+      'ಆಧಾರ್',
+      'ನನ್ನ ಆಧಾರ್ ನನ್ನ ಗುರುತು',
+      'ಹುಟ್ಟಿದ ದಿನಾಂಕ',
+      'ಪುರುಷ',
+      'ಮಹಿಳೆ',
+      'ದಾಖಲಾತಿ ಸಂಖ್ಯೆ',
+      'ವಿಳಾಸ'
+    ],
+    keywordsMl: [
+      'ഭാരതീയ വിശിഷ്ട തിരിച്ചറിയൽ അതോറിറ്റി',
+      'ഭാരത സർക്കാർ',
+      'ആധാർ',
+      'എന്റെ ആധാർ എന്റെ തിരിച്ചറിയൽ',
+      'ജനന തീയതി',
+      'പുരുഷൻ',
+      'സ്ത്രീ',
+      'എൻറോൾമെന്റ് നമ്പർ',
+      'മേൽവിലാസം'
     ],
     patterns: [
       /\b\d{4}\s+\d{4}\s+\d{4}\b/, // 12-digit Aadhaar number pattern
       /\b\d{4}\s*\d{4}\s*\d{4}\b/
     ],
-    frontMarkers: ['male', 'female', 'dob', 'year of birth', 'ஆண்', 'பெண்', 'பிறந்த தேதி'],
-    backMarkers: ['address', 's/o', 'd/o', 'w/o', 'c/o', 'முகவரி', 'த/பெ', 'க/பெ']
+    frontMarkers: [
+      'male', 'female', 'dob', 'year of birth',
+      'ஆண்', 'பெண்', 'பிறந்த தேதி',
+      'पुरुष', 'महिला', 'जन्म तिथि',
+      'పురుషుడు', 'స్త్రీ', 'పుట్టిన తేదీ',
+      'ಪುರುಷ', 'ಮಹಿಳೆ', 'ಹುಟ್ಟಿದ ದಿನಾಂಕ',
+      'പുരുഷൻ', 'സ്ത്രീ', 'ജനന തീയതി'
+    ],
+    backMarkers: [
+      'address', 's/o', 'd/o', 'w/o', 'c/o',
+      'முகவரி', 'த/பெ', 'க/பெ',
+      'पता', 'आत्मज', 'सुपुत्र', 'सुपुत्री', 'पत्नी',
+      'చిరునామా', 'కుమారుడు', 'కుమార్తె', 'భార్య',
+      'ವಿಳಾಸ', 'ಮಗ', 'ಮಗಳು', 'ಹೆಂಡತಿ',
+      'മേൽവിലാസം', 'മകൻ', 'മകൾ', 'ഭാര്യ'
+    ]
   },
 
   [DOCUMENT_TYPES.DRIVING_LICENCE]: {
@@ -107,17 +142,50 @@ const DOC_SIGNATURES = {
       'mcwg',
       'cov'
     ],
+    keywordsHi: [
+      'ड्राइविंग लाइसेंस',
+      'चालन अनुज्ञप्ति',
+      'परिवहन विभाग',
+      'लाइसेंस सं',
+      'वैधता',
+      'मोटर वाहन'
+    ],
     keywordsTa: [
       'ஓட்டுநர் உரிமம்',
       'போக்குவரத்து துறை',
       'உரிமம் எண்',
       'தமிழ்நாடு அரசு'
     ],
+    keywordsTe: [
+      'డ్రైవింగ్ లైసెన్స్',
+      'రవాణా శాఖ',
+      'లైసెన్స్ సంఖ్య',
+      'మోటార్ వాహనాల చట్టం'
+    ],
+    keywordsKn: [
+      'ಚಾಲನಾ ಪರವಾನಗಿ',
+      'ಸಾರಿಗೆ ಇಲಾಖೆ',
+      'ಪರವಾನಗಿ ಸಂಖ್ಯೆ',
+      'ಮೋಟಾರು ವಾಹನ ಕಾಯ್ದೆ'
+    ],
+    keywordsMl: [
+      'ഡ്രൈവിംഗ് ലൈസൻസ്',
+      'മോട്ടോർ വാഹന വകുപ്പ്',
+      'ലൈസൻസ് നമ്പർ',
+      'മോട്ടോർ വാഹന നിയമം'
+    ],
     patterns: [
       /\b[A-Z]{2}[-\s]?\d{2}[-\s]?(?:\d{4}|\d{11})\b/i // e.g. TN-05-2015..., DL-04...
     ],
-    frontMarkers: ['licence to drive', 'validity', 'cov', 'dob', 'blood group', 'ஓட்டுநர் உரிமம்'],
-    backMarkers: ['organ donor', 'badge', 'issuing authority', 'address', 'முகவரி']
+    frontMarkers: [
+      'licence to drive', 'validity', 'cov', 'dob', 'blood group',
+      'ஓட்டுநர் உரிமம்', 'ड्राइविंग लाइसेंस', 'चालन अनुज्ञप्ति',
+      'డ్రైవింగ్ లైసెన్స్', 'ಚಾಲನಾ ಪರವಾನಗಿ', 'ഡ്രൈവിംഗ് ലൈസൻസ്'
+    ],
+    backMarkers: [
+      'organ donor', 'badge', 'issuing authority', 'address',
+      'முகவரி', 'पता', 'చిరునామా', 'ವಿಳಾಸ', 'മേൽവിലാസം'
+    ]
   },
 
   [DOCUMENT_TYPES.VOTER_ID]: {
@@ -135,6 +203,15 @@ const DOC_SIGNATURES = {
       'part no',
       'elector'
     ],
+    keywordsHi: [
+      'भारत निर्वाचन आयोग',
+      'निर्वाचक फोटो पहचान पत्र',
+      'मतदाता पहचान पत्र',
+      'पहचान पत्र',
+      'विधान सभा निर्वाचन क्षेत्र',
+      'संसदीय निर्वाचन क्षेत्र',
+      'मतदाता'
+    ],
     keywordsTa: [
       'இந்திய தேர்தல் ஆணையம்',
       'வாக்காளர் புகைப்பட அடையாள அட்டை',
@@ -142,11 +219,40 @@ const DOC_SIGNATURES = {
       'சட்டமன்ற தொகுதி',
       'வாக்காளர்'
     ],
+    keywordsTe: [
+      'భారత ఎన్నికల సంఘం',
+      'ఓటరు ఫోటో గుర్తింపు కార్డు',
+      'ఓటరు గుర్తింపు కార్డు',
+      'శాసనసభ నియోజకవర్గం',
+      'ఓటరు'
+    ],
+    keywordsKn: [
+      'ಭಾರತ ಚುನಾವಣಾ ಆಯೋಗ',
+      'ಮತದಾರರ ಭಾವಚಿತ್ರವಿರುವ ಗುರುತಿನ ಚೀಟಿ',
+      'ಮತದಾರರ ಗುರುತಿನ ಚೀಟಿ',
+      'ವಿಧಾನಸಭಾ ಕ್ಷೇತ್ರ',
+      'ಮತದಾರ'
+    ],
+    keywordsMl: [
+      'ഭാരത തെരഞ്ഞെടുപ്പ് കമ്മീഷൻ',
+      'തിരിച്ചറിയൽ കാർഡ്',
+      'വോട്ടർ ഐഡി',
+      'നിയമസഭാ മണ്ഡലം',
+      'വോട്ടർ'
+    ],
     patterns: [
       /\b[A-Z]{3}[0-9]{7}\b/i // standard EPIC format e.g. ABC1234567
     ],
-    frontMarkers: ['elector photo identity card', 'elector name', 'epic', 'வாக்காளர் புகைப்பட'],
-    backMarkers: ['address', 'assembly constituency', 'date of issue', 'முகவரி', 'சட்டமன்ற தொகுதி']
+    frontMarkers: [
+      'elector photo identity card', 'elector name', 'epic',
+      'வாக்காளர் புகைப்பட', 'निर्वाचक फोटो', 'ఓటరు ఫోటో',
+      'ಭಾವಚಿತ್ರವಿರುವ ಗುರುತಿನ', 'തിരിച്ചറിയൽ കാർഡ്'
+    ],
+    backMarkers: [
+      'address', 'assembly constituency', 'date of issue',
+      'முகவரி', 'சட்டமன்ற தொகுதி', 'पता', 'निर्वाचन क्षेत्र',
+      'చిరునామా', 'విಳಾಸ', 'മേൽവിലാസം'
+    ]
   },
 
   [DOCUMENT_TYPES.GAS_BILL]: {
@@ -175,6 +281,16 @@ const DOC_SIGNATURES = {
       'torrent gas',
       'retail invoice'
     ],
+    keywordsHi: [
+      'भारत गैस',
+      'इण्डेन',
+      'एचपी गैस',
+      'रसोई गैस',
+      'सिलेंडर',
+      'उपभोक्ता संख्या',
+      'गैस एजेंसी',
+      'कैश मेमो'
+    ],
     keywordsTa: [
       'பாரத் கேஸ்',
       'இண்டேன்',
@@ -184,12 +300,36 @@ const DOC_SIGNATURES = {
       'நுகர்வோர் எண்',
       'விலைப்பட்டியல்'
     ],
+    keywordsTe: [
+      'భారత్ గ్యాస్',
+      'ఇండేన్',
+      'హెచ్‌పి గ్యాస్',
+      'గ్యాస్ సిలిండర్',
+      'వినియోగదారు సంఖ్య',
+      'గ్యాస్ ఏజెన్సీ'
+    ],
+    keywordsKn: [
+      'ಭಾರತ್ ಗ್ಯಾಸ್',
+      'ಇಂಡೇನ್',
+      'ಹೆಚ್‌ಪಿ ಗ್ಯಾಸ್',
+      'ಗ್ಯಾಸ್ ಸಿಲಿಂಡರ್',
+      'ಗ್ರಾಹಕರ ಸಂಖ್ಯೆ',
+      'ಗ್ಯಾಸ್ ಏಜೆನ್ಸಿ'
+    ],
+    keywordsMl: [
+      'ഭാരത് ഗ്യാസ്',
+      'ഇൻഡെയ്ൻ',
+      'എച്ച്പി ഗ്യാസ്',
+      'ഗ്യാസ് സിലിണ്ടർ',
+      'ഉപഭോക്തൃ നമ്പർ',
+      'ഗ്യാസ് ഏജൻസി'
+    ],
     patterns: [
       /consumer\s*(?:no|number|id)[\s.:]*\d+/i,
       /refill\s*(?:booking|order)[\s.:]*\d+/i
     ],
-    frontMarkers: ['cash memo', 'invoice', 'consumer', 'bill', 'distributor'],
-    backMarkers: ['safety', 'instructions', 'terms', 'conditions']
+    frontMarkers: ['cash memo', 'invoice', 'consumer', 'bill', 'distributor', 'उपभोक्ता', 'நுகர்வோர்', 'వినియోగదారు', 'ಗ್ರಾಹಕ', 'ഉപഭോക്താവ്'],
+    backMarkers: ['safety', 'instructions', 'terms', 'conditions', 'सुरक्षा', 'பாதுகாப்பு']
   },
 
   [DOCUMENT_TYPES.RENTAL_AGREEMENT]: {
@@ -214,6 +354,16 @@ const DOC_SIGNATURES = {
       'witnesseth',
       'herein after called'
     ],
+    keywordsHi: [
+      'किरायानामा',
+      'किराया अनुबंध',
+      'पट्टा विलेख',
+      'स्टाम्प पेपर',
+      'गैर न्यायिक',
+      'मकान मालिक',
+      'किरायेदार',
+      'मासिक किराया'
+    ],
     keywordsTa: [
       'வாடகை ஒப்பந்தம்',
       'குத்தகை ஒப்பந்தம்',
@@ -223,14 +373,34 @@ const DOC_SIGNATURES = {
       'உரிமையாளர்',
       'குடியிருப்பவர்'
     ],
+    keywordsTe: [
+      'అద్దె ఒప్పందం',
+      'లీజు ఒప్పందం',
+      'స్టాంప్ పేపర్',
+      'ఇంటి యజమాని',
+      'అద్దెదారు'
+    ],
+    keywordsKn: [
+      'ಬಾಡಿಗೆ ಒಪ್ಪಂದ',
+      'ಗುತ್ತಿಗೆ ಒಪ್ಪಂದ',
+      'ಸ್ಟ್ಯಾಂಪ್ ಪೇಪರ್',
+      'ಮನೆ ಮಾಲೀಕ',
+      'ಬಾಡಿಗೆದಾರ'
+    ],
+    keywordsMl: [
+      'വാടക കരാർ',
+      'മുദ്രപ്പത്രം',
+      'വീട്ടുടമസ്ഥൻ',
+      'വാടകക്കാരൻ'
+    ],
     patterns: [
       /rental\s+agreement/i,
       /lease\s+agreement/i,
       /tenancy\s+agreement/i,
       /stamp\s+duty/i
     ],
-    frontMarkers: ['non judicial', 'stamp', 'this agreement', 'between', 'முத்திரைத்தாள்'],
-    backMarkers: ['witness', 'signature', 'lessor', 'lessee', 'tenant', 'landlord']
+    frontMarkers: ['non judicial', 'stamp', 'this agreement', 'between', 'முத்திரைத்தாள்', 'स्टाम्प', 'స్టాంప్', 'ಸ್ಟ್ಯಾಂಪ್', 'മുദ്രപ്പത്രം'],
+    backMarkers: ['witness', 'signature', 'lessor', 'lessee', 'tenant', 'landlord', 'हस्ताक्षर', 'கையொப்பம்']
   },
 
   [DOCUMENT_TYPES.PASSPORT]: {
@@ -250,17 +420,38 @@ const DOC_SIGNATURES = {
       'national status indian',
       'indian passport'
     ],
+    keywordsHi: [
+      'पासपोर्ट',
+      'भारत गणराज्य',
+      'विदेश मंत्रालय',
+      'पासपोर्ट संख्या'
+    ],
     keywordsTa: [
       'கடவுச்சீட்டு',
       'இந்தியக் குடியரசு',
       'வெளியுறவு அமைச்சகம்'
+    ],
+    keywordsTe: [
+      'పాస్‌పోర్ట్',
+      'భారత గణతంత్రం',
+      'విదేశీ వ్యవహారాల మంత్రిత్వ శాఖ'
+    ],
+    keywordsKn: [
+      'ಪಾಸ್‌ಪೋರ್ಟ್',
+      'ಭಾರತ ಗಣರಾಜ್ಯ',
+      'ವಿದೇಶಾಂಗ ಸಚಿವಾಲಯ'
+    ],
+    keywordsMl: [
+      'പാസ്പോർട്ട്',
+      'ഭാരത റിപ്പബ്ലിക്',
+      'വിദേശകാര്യ മന്ത്രാലയം'
     ],
     patterns: [
       /\b[A-Z]\d{7}\b/i, // Indian passport number: 1 letter + 7 digits
       /P<IND[A-Z<]+/ // Machine Readable Zone line 1
     ],
     frontMarkers: ['type p', 'code ind', 'given name', 'surname', 'date of birth'],
-    backMarkers: ['father', 'mother', 'spouse', 'address', 'file no', 'old passport']
+    backMarkers: ['father', 'mother', 'spouse', 'address', 'file no', 'old passport', 'पता', 'முகவரி', 'చిరునామా', 'ವಿಳಾಸ', 'മേൽവിലാസം']
   }
 };
 
@@ -354,9 +545,9 @@ async function extractDocumentText(filePathOrBuffer, mimeType = 'application/pdf
     return '';
   }
 
-  // 2. OCR using Tesseract with English + Tamil (for image buffers)
+  // 2. OCR using Tesseract with all 6 Indian languages (for image buffers)
   try {
-    const worker = await getDualLanguageWorker();
+    const worker = await getIndianLanguageWorker();
     if (worker) {
       const ret = await worker.recognize(buffer);
       if (ret && ret.data && ret.data.text) {
@@ -364,7 +555,7 @@ async function extractDocumentText(filePathOrBuffer, mimeType = 'application/pdf
       }
     }
   } catch (ocrErr) {
-    console.warn('Dual-language OCR error:', ocrErr.message);
+    console.warn('Indian-language OCR error:', ocrErr.message);
   }
 
   return '';
@@ -372,7 +563,7 @@ async function extractDocumentText(filePathOrBuffer, mimeType = 'application/pdf
 
 /**
  * Automatically detect actual document type from extracted text
- * Supports English and Tamil
+ * Supports English, Hindi, Tamil, Telugu, Kannada, and Malayalam
  */
 function detectDocumentTypeFromText(rawText) {
   if (!rawText || rawText.trim().length < 8) {
@@ -392,16 +583,21 @@ function detectDocumentTypeFromText(rawText) {
     let score = 0;
 
     // English keywords
-    for (const kw of sig.keywordsEn) {
+    for (const kw of (sig.keywordsEn || [])) {
       if (textLower.includes(kw) || textNoSpaces.includes(kw.replace(/\s+/g, ''))) {
         score += 20;
       }
     }
 
-    // Tamil keywords
-    for (const kw of sig.keywordsTa) {
-      if (textLower.includes(kw) || textNoSpaces.includes(kw.replace(/\s+/g, ''))) {
-        score += 25;
+    // Indic keywords (Hindi, Tamil, Telugu, Kannada, Malayalam)
+    const indicLists = [sig.keywordsHi, sig.keywordsTa, sig.keywordsTe, sig.keywordsKn, sig.keywordsMl];
+    for (const list of indicLists) {
+      if (Array.isArray(list)) {
+        for (const kw of list) {
+          if (textLower.includes(kw) || textNoSpaces.includes(kw.replace(/\s+/g, ''))) {
+            score += 25;
+          }
+        }
       }
     }
 
@@ -476,13 +672,15 @@ function detectDocumentSide(rawText, expectedType) {
  * Flow:
  * Upload/Take Photo
  * → Check Image Quality
- * → OCR English/Tamil
+ * → OCR 6 Indian Languages (English, Hindi, Tamil, Telugu, Kannada, Malayalam)
+ * → Detect Document Language & Mixed-Language Status
  * → Detect Actual Document Type
  * → Compare with Selected Document Type
  * → Validate Front/Back
- * → Extract Address
- * → Compare Address
- * → PASS / FAIL
+ * → Extract Address & Name
+ * → Compare Address & Name against HR records
+ * → Route unclear/failed OCR to REVIEW REQUIRED
+ * → PASS / REVIEW REQUIRED / FAIL
  */
 async function validateAddressProofDocument({
   frontFileOrBuffer = null,
@@ -516,6 +714,10 @@ async function validateAddressProofDocument({
     maskedId: null,
     extractedName: '',
     extractedAddress: '',
+    languageDetection: null,
+    detectedLanguages: [],
+    isMixedLanguage: false,
+    languageSummary: '',
     nameMatch: {
       hrNameMatch: 'NOT MATCH',
       employeeConfirmedNameMatch: 'NOT MATCH',
@@ -527,7 +729,9 @@ async function validateAddressProofDocument({
       overallResult: 'REVIEW REQUIRED'
     },
     error: null,
-    details: ''
+    details: '',
+    requiresManualReview: false,
+    statusMessage: ''
   };
 
   if (!selectedDocumentType) {
@@ -541,13 +745,19 @@ async function validateAddressProofDocument({
     const frontQuality = inspectImageQuality(frontFileOrBuffer, frontMetrics);
     if (!frontQuality.isClear) {
       result.error = 'Image is not clear. Please retake or replace the document.';
-      result.details = 'Front image appears blurry or out of focus.';
+      result.details = 'Front image appears blurry or out of focus. Sent for HR/BGV review.';
       result.reason = 'QUALITY_FAILED';
+      result.requiresManualReview = true;
+      result.overallResult = 'REVIEW REQUIRED';
+      result.statusMessage = 'IMAGE BLURRED – REVIEW REQUIRED';
       return result;
     }
     if (!frontQuality.hasGoodLighting) {
       result.error = frontQuality.error || 'Image lighting is poor. Please retake with sufficient light.';
       result.reason = 'QUALITY_FAILED';
+      result.requiresManualReview = true;
+      result.overallResult = 'REVIEW REQUIRED';
+      result.statusMessage = 'POOR LIGHTING – REVIEW REQUIRED';
       return result;
     }
 
@@ -565,11 +775,14 @@ async function validateAddressProofDocument({
       quality: frontQuality
     };
 
-    // Check if text could be read
+    // Check if text could be read clearly
     if (!extractedFrontText || extractedFrontText.trim().length < 10) {
-      result.error = 'Document text could not be read. Please upload a clearer image.';
-      result.details = 'OCR was unable to extract legible text from Front side.';
+      result.error = 'Document text could not be clearly read. Flagged for HR/BGV manual review.';
+      result.details = 'OCR was unable to extract legible text from Front side. Sent to HR/BGV review queue.';
       result.reason = 'UNREADABLE_TEXT';
+      result.requiresManualReview = true;
+      result.overallResult = 'REVIEW REQUIRED';
+      result.statusMessage = 'ADDRESS COULD NOT BE READ – REVIEW REQUIRED';
       return result;
     }
 
@@ -584,9 +797,12 @@ async function validateAddressProofDocument({
     // Check if completely unrelated photo / non-document
     const frontMatchesSelected = (frontDetect.scores[selectedDocumentType] || 0) > 0;
     if (!frontDetect.detectedType && !frontMatchesSelected && frontSideDetect.side === 'unknown') {
-      result.error = `This does not appear to be a valid ${selectedDocumentType}. Please upload the correct document.`;
+      result.error = `This does not appear to be a valid ${selectedDocumentType}. Flagged for HR/BGV review.`;
       result.details = 'Front image does not contain recognizable identity/utility document text.';
       result.reason = 'DOCUMENT_TYPE_NOT_DETECTED';
+      result.requiresManualReview = true;
+      result.overallResult = 'REVIEW REQUIRED';
+      result.statusMessage = 'DOCUMENT TYPE UNCLEAR – REVIEW REQUIRED';
       return result;
     }
 
@@ -602,13 +818,19 @@ async function validateAddressProofDocument({
     const backQuality = inspectImageQuality(backFileOrBuffer, backMetrics);
     if (!backQuality.isClear) {
       result.error = 'Image is not clear. Please retake or replace the document.';
-      result.details = 'Back image appears blurry or out of focus.';
+      result.details = 'Back image appears blurry or out of focus. Sent for HR/BGV review.';
       result.reason = 'QUALITY_FAILED';
+      result.requiresManualReview = true;
+      result.overallResult = 'REVIEW REQUIRED';
+      result.statusMessage = 'IMAGE BLURRED – REVIEW REQUIRED';
       return result;
     }
     if (!backQuality.hasGoodLighting) {
       result.error = backQuality.error || 'Image lighting is poor. Please retake with sufficient light.';
       result.reason = 'QUALITY_FAILED';
+      result.requiresManualReview = true;
+      result.overallResult = 'REVIEW REQUIRED';
+      result.statusMessage = 'POOR LIGHTING – REVIEW REQUIRED';
       return result;
     }
 
@@ -628,9 +850,12 @@ async function validateAddressProofDocument({
 
     // Check if text could be read
     if (!extractedBackText || extractedBackText.trim().length < 10) {
-      result.error = 'Document text could not be read. Please upload a clearer image.';
-      result.details = 'OCR was unable to extract legible text from Back side.';
+      result.error = 'Document text could not be clearly read. Flagged for HR/BGV manual review.';
+      result.details = 'OCR was unable to extract legible text from Back side. Sent to HR/BGV review queue.';
       result.reason = 'UNREADABLE_TEXT';
+      result.requiresManualReview = true;
+      result.overallResult = 'REVIEW REQUIRED';
+      result.statusMessage = 'ADDRESS COULD NOT BE READ – REVIEW REQUIRED';
       return result;
     }
 
@@ -645,9 +870,12 @@ async function validateAddressProofDocument({
     // Check if completely unrelated photo
     const backMatchesSelected = (backDetect.scores[selectedDocumentType] || 0) > 0;
     if (!backDetect.detectedType && !backMatchesSelected && backSideDetect.side === 'unknown') {
-      result.error = `This does not appear to be a valid ${selectedDocumentType}. Please upload the correct document.`;
+      result.error = `This does not appear to be a valid ${selectedDocumentType}. Flagged for HR/BGV review.`;
       result.details = 'Back image does not contain recognizable identity/utility document text.';
       result.reason = 'DOCUMENT_TYPE_NOT_DETECTED';
+      result.requiresManualReview = true;
+      result.overallResult = 'REVIEW REQUIRED';
+      result.statusMessage = 'DOCUMENT TYPE UNCLEAR – REVIEW REQUIRED';
       return result;
     }
   }
@@ -685,13 +913,19 @@ async function validateAddressProofDocument({
   result.sideValidPassed = true;
   result.detectedType = result.frontResult?.detectedType || result.backResult?.detectedType || selectedDocumentType;
 
-  // 4. Address & Name Extraction & Privacy Masking (Both English and Tamil)
+  // 4. Address & Name Extraction & Multi-language Detection
   const combinedRawText = [extractedFrontText, extractedBackText].filter(Boolean).join('\n');
+  const langDetection = detectDocumentLanguage(combinedRawText);
+  result.languageDetection = langDetection;
+  result.detectedLanguages = langDetection.languages;
+  result.isMixedLanguage = langDetection.isMixedLanguage;
+  result.languageSummary = langDetection.languageSummary;
+
   const { extractAddressFromText, extractNameFromText, compareNameComponents } = require('./documentAddressMatcher');
   const rawExtractedAddr = extractAddressFromText(combinedRawText) || combinedRawText.substring(0, 160).trim();
   result.extractedAddress = maskAadhaarNumbers(rawExtractedAddr);
 
-  // Extract Name from document text
+  // Extract Name from document text (English & Indian Languages)
   const rawExtractedName = extractNameFromText(combinedRawText, selectedDocumentType, [hrName, employeeConfirmedName]) ||
                           extractNameFromText(extractedFrontText, selectedDocumentType, [hrName, employeeConfirmedName]) ||
                           extractNameFromText(extractedBackText, selectedDocumentType, [hrName, employeeConfirmedName]);
@@ -751,5 +985,9 @@ module.exports = {
   inspectImageQuality,
   extractDocumentText,
   validateAddressProofDocument,
-  maskAadhaarNumbers
+  maskAadhaarNumbers,
+  getDualLanguageWorker,
+  getIndianLanguageWorker,
+  detectDocumentLanguage
 };
+

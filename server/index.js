@@ -44,6 +44,7 @@ app.use('/api/reports', require('./routes/reports'));
 app.use('/api/downloads', require('./routes/downloadArea'));
 app.use('/api/masters', require('./routes/masters'));
 app.use('/api/users', require('./routes/users'));
+app.use('/api/roles', require('./routes/roles'));
 app.use('/api/audit', require('./routes/audit'));
 
 // Health check

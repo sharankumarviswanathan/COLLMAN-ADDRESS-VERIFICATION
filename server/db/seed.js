@@ -63,6 +63,27 @@ async function seed() {
     );
   }
 
+  // 3b. Master Designations
+  const designatns = [
+    { code: 'EXE', name: 'Executive', desc: 'Core operations & verification executive' },
+    { code: 'FOE', name: 'Field Operations Executive', desc: 'On-ground field verification & operations' },
+    { code: 'SOE', name: 'Senior Operations Executive', desc: 'Senior operations & verification analysis' },
+    { code: 'SSE', name: 'Senior Software Engineer', desc: 'Software engineering & platform development' },
+    { code: 'OE', name: 'Operations Executive', desc: 'Operations & workflow processing' },
+    { code: 'SS', name: 'Support Specialist', desc: 'Customer & partner support specialist' },
+    { code: 'BA', name: 'BGV Analyst', desc: 'Background verification case analyst' },
+    { code: 'ACC', name: 'Accountant', desc: 'Finance & account processing' },
+    { code: 'OL', name: 'Operations Lead', desc: 'Operations leadership & coordination' },
+    { code: 'HRE', name: 'HR Executive', desc: 'Human resources management & onboarding' }
+  ];
+
+  for (const des of designatns) {
+    await query.run(
+      `INSERT OR IGNORE INTO designations (designation_code, designation_name, description, is_active) VALUES (?, ?, ?, 1)`,
+      [des.code, des.name, des.desc]
+    );
+  }
+
   // 4. Master Locations
   const locations = [
     { name: 'Chennai Central', city: 'Chennai', state: 'Tamil Nadu' },

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useVerification } from '../../context/VerificationContext';
 import { api } from '../../api/client';
 import { capturePhotoLocation } from '../../lib/photoLocation';
-import { validatePhotoInBrowser } from '../../lib/imageValidator';
+import { validatePhotoWithAi } from '../../lib/imageValidator';
 import { getCameraStream, stopMediaStream } from '../../lib/cameraHelper';
 import { ImageValidationFeedback } from './ImageValidationFeedback';
 import {
@@ -52,34 +52,49 @@ export function StepDoorSelfie() {
     };
   }, []);
 
-  // Analyze any preview image from scratch
+  // Analyze any preview image from scratch using full AI validation
   useEffect(() => {
+    let isMounted = true;
     if (previewImg && !validationResult && !validating && !cameraActive) {
       setValidating(true);
-      validatePhotoInBrowser(previewImg, 'door_selfie', employee?.hrAddress || '')
+      setErrorMsg('');
+      validatePhotoWithAi(previewImg, 'door_selfie', employee?.hrAddress || '')
         .then((val) => {
-          setValidationResult(val);
-          if (!val.valid) {
-            setErrorMsg(val.error || 'Door number selfie validation failed. Please retake the photo.');
-          }
-        })
-        .catch(() => {
-          setValidationResult({
+          if (!isMounted) return;
+          const safeVal = val && typeof val === 'object' ? val : {
             valid: false,
-            error: 'Automated photo validation could not verify this image. Please retake the photo.',
+            error: 'Unable to analyze photo. Please retake the photo.',
             checks: {
               clarity: { passed: false, message: 'Check failed' },
               lighting: { passed: false, message: 'Check failed' },
               visibility: { passed: false, message: 'Check failed' },
-              content: { passed: false, message: 'Validation error' }
+              content: { passed: false, message: 'Check failed' }
+            }
+          };
+          setValidationResult(safeVal);
+          if (!safeVal.valid) {
+            setErrorMsg(safeVal.error || 'Door number selfie validation failed. Please retake the photo.');
+          }
+        })
+        .catch(() => {
+          if (!isMounted) return;
+          setValidationResult({
+            valid: false,
+            error: 'Unable to analyze photo. Please retake the photo.',
+            checks: {
+              clarity: { passed: false, message: 'Check failed' },
+              lighting: { passed: false, message: 'Check failed' },
+              visibility: { passed: false, message: 'Check failed' },
+              content: { passed: false, message: 'Check failed' }
             }
           });
-          setErrorMsg('Photo validation failed. Please retake the photo.');
+          setErrorMsg('Unable to analyze photo. Please retake the photo.');
         })
         .finally(() => {
-          setValidating(false);
+          if (isMounted) setValidating(false);
         });
     }
+    return () => { isMounted = false; };
   }, [previewImg, cameraActive]);
 
   useEffect(() => {
@@ -159,6 +174,8 @@ export function StepDoorSelfie() {
 
     stopCamera();
     setPreviewImg(dataUrl);
+    setValidationResult(null);
+    setErrorMsg('');
 
     // 1. Capture independent live GPS fix at the exact moment door selfie is snapped
     const loc = await capturePhotoLocation();
@@ -166,36 +183,43 @@ export function StepDoorSelfie() {
 
     // 2. Perform immediate automated validation on snapshot
     setValidating(true);
-    setErrorMsg('');
     try {
-      const val = await validatePhotoInBrowser(dataUrl, 'door_selfie', employee?.hrAddress || '');
-      setValidationResult(val);
-      if (!val.valid) {
-        setErrorMsg(val.error || 'Door number selfie validation failed. Please retake the photo.');
+      const val = await validatePhotoWithAi(dataUrl, 'door_selfie', employee?.hrAddress || '');
+      const safeVal = val && typeof val === 'object' ? val : {
+        valid: false,
+        error: 'Unable to analyze photo. Please retake the photo.',
+        checks: {
+          clarity: { passed: false, message: 'Check failed' },
+          lighting: { passed: false, message: 'Check failed' },
+          visibility: { passed: false, message: 'Check failed' },
+          content: { passed: false, message: 'Check failed' }
+        }
+      };
+      setValidationResult(safeVal);
+      if (!safeVal.valid) {
+        setErrorMsg(safeVal.error || 'Door number selfie validation failed. Please retake the photo.');
       }
     } catch (vErr) {
       console.warn('Validation error:', vErr);
       const failVal = {
         valid: false,
-        error: 'Automated photo validation could not verify this image. Please retake the photo.',
+        error: 'Unable to analyze photo. Please retake the photo.',
         checks: {
           clarity: { passed: false, message: 'Check failed' },
           lighting: { passed: false, message: 'Check failed' },
           visibility: { passed: false, message: 'Check failed' },
-          content: { passed: false, message: 'Validation error' }
+          content: { passed: false, message: 'Check failed' }
         }
       };
       setValidationResult(failVal);
-      setErrorMsg(failVal.error);
+      setErrorMsg('Unable to analyze photo. Please retake the photo.');
     } finally {
       setValidating(false);
     }
   }
 
   async function handleConfirmPhoto() {
-    if (!previewImg) return;
-
-    if (!validationResult || !validationResult.valid) {
+    if (!previewImg || !validationResult || !validationResult.valid || validating) {
       setErrorMsg(validationResult?.error || 'Door number selfie validation failed. Please retake the photo.');
       return;
     }
@@ -220,13 +244,24 @@ export function StepDoorSelfie() {
       nextStep();
     } catch (err) {
       console.error('Door number selfie save error:', err);
+      const failReport = {
+        valid: false,
+        error: err.message || 'Failed to save door number selfie. Please retake the photo.',
+        checks: {
+          clarity: { passed: false, message: 'Save failed' },
+          lighting: { passed: false, message: 'Save failed' },
+          visibility: { passed: false, message: 'Save failed' },
+          content: { passed: false, message: err.message || 'Validation error' }
+        }
+      };
+      setValidationResult(failReport);
       setErrorMsg(err.message || 'Failed to save door number selfie. Please retake the photo.');
     } finally {
       setLoading(false);
     }
   }
 
-  const canProceed = Boolean(previewImg && validationResult?.valid === true && !validating);
+  const canProceed = Boolean(previewImg && validationResult && validationResult.valid === true && !validating && !loading);
 
   return (
     <div className="emp-card">
@@ -397,7 +432,28 @@ export function StepDoorSelfie() {
       {/* Preview Confirmation Controls */}
       {previewImg && !cameraActive && (
         <div style={{ marginBottom: '16px' }}>
-          {validationResult && !validationResult.valid ? (
+          {validating ? (
+            <button
+              type="button"
+              className="btn btn-secondary btn-large"
+              style={{
+                width: '100%',
+                opacity: 0.8,
+                cursor: 'not-allowed',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                backgroundColor: '#F0F9FF',
+                borderColor: '#BAE6FD',
+                color: '#0369A1'
+              }}
+              disabled
+            >
+              <RefreshCw size={18} className="animate-spin" style={{ animation: 'spin 1s linear infinite' }} />
+              <span style={{ fontWeight: 600 }}>Analyzing Photo Quality & Content...</span>
+            </button>
+          ) : validationResult && !validationResult.valid ? (
             <button
               id="btn-retake-door-only"
               type="button"
@@ -460,7 +516,7 @@ export function StepDoorSelfie() {
         </div>
       )}
 
-      {errorMsg && (
+      {errorMsg && (!validationResult || validationResult.valid) && (
         <div
           style={{
             backgroundColor: 'var(--danger-light)',

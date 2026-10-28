@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import { X, UserPlus, AlertCircle, CheckCircle2 } from 'lucide-react';
 
@@ -7,14 +7,13 @@ export function AddEmployeeModal({ isOpen, onClose, onCreated, masters }) {
     employeeId: '',
     employeeName: '',
     mobileNumber: '',
-    altMobileNumber: '',
-    emailId: '',
+    reportingManager: '',
+    teamLeader: '',
     dateOfJoining: new Date().toISOString().split('T')[0],
     department: 'Operations',
     designation: 'Executive',
     branch: 'Chennai Headquarters',
-    location: 'Chennai Central',
-    reportingManager: '',
+    location: '',
     currentAddress: '',
     city: 'Chennai',
     state: 'Tamil Nadu',
@@ -23,9 +22,121 @@ export function AddEmployeeModal({ isOpen, onClose, onCreated, masters }) {
     permanentPincode: ''
   });
 
+  const [isCustomTl, setIsCustomTl] = useState(false);
+  const [isCustomMgr, setIsCustomMgr] = useState(false);
+  const [isCustomDesig, setIsCustomDesig] = useState(false);
+  const [managerTeamLeaders, setManagerTeamLeaders] = useState([]);
+  const [tlLoading, setTlLoading] = useState(false);
+  const [tlError, setTlError] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  useEffect(() => {
+    if (!isOpen) {
+      setManagerTeamLeaders([]);
+      setIsCustomMgr(false);
+      setIsCustomTl(false);
+      setIsCustomDesig(false);
+      setTlError('');
+    } else {
+      if (masters?.designations?.length > 0 && !formData.designation) {
+        handleChange('designation', masters.designations[0].designation_name);
+      }
+      if (formData.branch) {
+        const bObj = masters?.branches?.find(
+          (b) => b.branch_name === formData.branch || b.branch_code === formData.branch
+        );
+        if (bObj) {
+          const eligibleLocs = (masters?.locations || []).filter(
+            (l) => l.branch_id === bObj.id && l.is_active === 1
+          );
+          if (eligibleLocs.length > 0 && !eligibleLocs.some((l) => l.location_name === formData.location)) {
+            handleChange('location', eligibleLocs[0].location_name);
+          }
+        }
+      }
+    }
+  }, [isOpen, masters?.designations, masters?.branches, masters?.locations]);
+
+  async function loadTeamLeaders(managerVal) {
+    if (!managerVal || managerVal === '__custom__') {
+      setManagerTeamLeaders([]);
+      return;
+    }
+    const mgrObj = masters?.managers?.find(
+      (m) => m.full_name === managerVal || m.username === managerVal || String(m.id) === String(managerVal)
+    );
+    const lookupKey = mgrObj?.username || mgrObj?.id || managerVal;
+    setTlLoading(true);
+    setTlError('');
+    try {
+      const data = await api.masters.getTeamLeadersByManager(lookupKey);
+      setManagerTeamLeaders(Array.isArray(data?.teamLeaders) ? data.teamLeaders : []);
+    } catch (err) {
+      console.error('Failed to load team leaders for manager:', err);
+      setTlError('Failed to load Team Leaders for this Manager');
+      setManagerTeamLeaders([]);
+    } finally {
+      setTlLoading(false);
+    }
+  }
+
+  function handleManagerChange(managerVal) {
+    if (managerVal === '__custom__') {
+      setIsCustomMgr(true);
+      handleChange('reportingManager', '');
+      handleChange('teamLeader', '');
+      setManagerTeamLeaders([]);
+      return;
+    }
+    handleChange('reportingManager', managerVal);
+    // Requirement 3: When Manager changes, immediately clear previously selected Team Leader
+    handleChange('teamLeader', '');
+    if (managerVal) {
+      loadTeamLeaders(managerVal);
+    } else {
+      setManagerTeamLeaders([]);
+    }
+  }
+
+  // Resolve active locations for currently selected branch
+  const selectedBranchObj = masters?.branches?.find(
+    (b) => b.branch_name === formData.branch || b.branch_code === formData.branch
+  );
+  const activeBranchLocations = selectedBranchObj
+    ? (masters?.locations || []).filter(
+        (l) => l.branch_id === selectedBranchObj.id && l.is_active === 1
+      )
+    : [];
+
+  function handleBranchChange(newBranchName) {
+    handleChange('branch', newBranchName);
+
+    const branchObj = masters?.branches?.find(
+      (b) => b.branch_name === newBranchName || b.branch_code === newBranchName
+    );
+
+    if (branchObj) {
+      const eligibleLocs = (masters?.locations || []).filter(
+        (l) => l.branch_id === branchObj.id && l.is_active === 1
+      );
+      // Requirement 8: If the branch changes, clear the previously selected location if it does not belong to the new branch and reload the correct location options.
+      const stillValid = eligibleLocs.some((l) => l.location_name === formData.location);
+      if (!stillValid) {
+        handleChange('location', eligibleLocs.length > 0 ? eligibleLocs[0].location_name : '');
+      }
+
+      if (branchObj.city && (!formData.city || formData.city === 'Chennai')) {
+        handleChange('city', branchObj.city);
+      }
+      if (branchObj.state && (!formData.state || formData.state === 'Tamil Nadu')) {
+        handleChange('state', branchObj.state);
+      }
+    } else {
+      handleChange('location', '');
+    }
+  }
 
   if (!isOpen) return null;
 
@@ -40,6 +151,27 @@ export function AddEmployeeModal({ isOpen, onClose, onCreated, masters }) {
     if (!formData.employeeId.trim() || !formData.employeeName.trim() || !formData.mobileNumber.trim() || !formData.currentAddress.trim()) {
       setErrorMsg('Please fill in all mandatory fields.');
       return;
+    }
+
+    if (formData.reportingManager && formData.teamLeader && !isCustomTl) {
+      const isValidTl = managerTeamLeaders.some(
+        (tl) => tl.full_name === formData.teamLeader || tl.username === formData.teamLeader
+      );
+      if (managerTeamLeaders.length > 0 && !isValidTl) {
+        setErrorMsg(`Validation error: Selected Team Leader '${formData.teamLeader}' does not report to Manager '${formData.reportingManager}'.`);
+        return;
+      }
+    }
+
+    // Branch - Location validation
+    if (formData.branch && formData.location && activeBranchLocations.length > 0) {
+      const isValidLoc = activeBranchLocations.some(
+        (l) => l.location_name.toLowerCase().trim() === formData.location.toLowerCase().trim()
+      );
+      if (!isValidLoc) {
+        setErrorMsg(`Validation error: Location '${formData.location}' does not belong to branch '${formData.branch}'.`);
+        return;
+      }
     }
 
     setLoading(true);
@@ -153,6 +285,7 @@ export function AddEmployeeModal({ isOpen, onClose, onCreated, masters }) {
                   Mobile Number <span className="required">*</span>
                 </label>
                 <input
+                  id="input-emp-mobile"
                   type="tel"
                   className="form-control"
                   placeholder="10 digit mobile"
@@ -163,28 +296,128 @@ export function AddEmployeeModal({ isOpen, onClose, onCreated, masters }) {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Alt Mobile</label>
-                <input
-                  type="tel"
-                  className="form-control"
-                  placeholder="Optional"
-                  value={formData.altMobileNumber}
-                  onChange={(e) => handleChange('altMobileNumber', e.target.value)}
-                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label className="form-label" style={{ marginBottom: 4 }}>Manager</label>
+                  {masters?.managers && masters.managers.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomMgr(!isCustomMgr);
+                        handleChange('reportingManager', '');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        padding: 0,
+                        color: 'var(--primary)',
+                        fontSize: '0.72rem',
+                        cursor: 'pointer',
+                        textDecoration: 'underline'
+                      }}
+                    >
+                      {isCustomMgr ? 'Select from list' : 'Custom'}
+                    </button>
+                  )}
+                </div>
+                {!isCustomMgr && masters?.managers && masters.managers.length > 0 ? (
+                  <select
+                    id="select-emp-manager"
+                    className="form-control form-select"
+                    value={formData.reportingManager}
+                    onChange={(e) => handleManagerChange(e.target.value)}
+                  >
+                    <option value="">Select Manager</option>
+                    {masters.managers.map((m) => (
+                      <option key={m.id || m.full_name} value={m.full_name}>
+                        {m.full_name}{m.username ? ` (${m.username})` : ''}
+                      </option>
+                    ))}
+                    <option value="__custom__">+ Enter custom name...</option>
+                  </select>
+                ) : (
+                  <input
+                    id="input-emp-manager"
+                    type="text"
+                    className="form-control"
+                    placeholder="Manager Name"
+                    value={formData.reportingManager}
+                    onChange={(e) => handleManagerChange(e.target.value)}
+                  />
+                )}
               </div>
 
               <div className="form-group">
-                <label className="form-label">
-                  Email ID <span className="required">*</span>
-                </label>
-                <input
-                  type="email"
-                  className="form-control"
-                  placeholder="name@collman.com"
-                  value={formData.emailId}
-                  onChange={(e) => handleChange('emailId', e.target.value)}
-                  required
-                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label className="form-label" style={{ marginBottom: 4 }}>Team Leader</label>
+                  <button
+                    type="button"
+                    disabled={!formData.reportingManager}
+                    onClick={() => {
+                      setIsCustomTl(!isCustomTl);
+                      handleChange('teamLeader', '');
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      color: !formData.reportingManager ? 'var(--text-muted)' : 'var(--primary)',
+                      fontSize: '0.72rem',
+                      cursor: !formData.reportingManager ? 'not-allowed' : 'pointer',
+                      textDecoration: 'underline'
+                    }}
+                  >
+                    {isCustomTl ? 'Select from list' : 'Custom'}
+                  </button>
+                </div>
+                {!isCustomTl ? (
+                  <select
+                    id="select-emp-team-leader"
+                    className="form-control form-select"
+                    value={formData.teamLeader}
+                    disabled={!formData.reportingManager || tlLoading}
+                    onChange={(e) => {
+                      if (e.target.value === '__custom__') {
+                        setIsCustomTl(true);
+                        handleChange('teamLeader', '');
+                      } else {
+                        handleChange('teamLeader', e.target.value);
+                      }
+                    }}
+                  >
+                    {!formData.reportingManager ? (
+                      <option value="">Select Manager First</option>
+                    ) : tlLoading ? (
+                      <option value="">Loading Team Leaders...</option>
+                    ) : managerTeamLeaders.length === 0 ? (
+                      <option value="">No Team Leaders available for this Manager</option>
+                    ) : (
+                      <>
+                        <option value="">Select Team Leader</option>
+                        {managerTeamLeaders.map((tl) => (
+                          <option key={tl.id || tl.username} value={tl.full_name}>
+                            {tl.full_name} ({tl.username})
+                          </option>
+                        ))}
+                        <option value="__custom__">+ Enter custom name...</option>
+                      </>
+                    )}
+                  </select>
+                ) : (
+                  <input
+                    id="input-emp-team-leader"
+                    type="text"
+                    className="form-control"
+                    placeholder="Team Leader Name"
+                    disabled={!formData.reportingManager}
+                    value={formData.teamLeader}
+                    onChange={(e) => handleChange('teamLeader', e.target.value)}
+                  />
+                )}
+                {tlError && (
+                  <div style={{ fontSize: '0.75rem', color: 'var(--danger)', marginTop: 4 }}>
+                    {tlError}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -216,13 +449,64 @@ export function AddEmployeeModal({ isOpen, onClose, onCreated, masters }) {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Designation</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  value={formData.designation}
-                  onChange={(e) => handleChange('designation', e.target.value)}
-                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label className="form-label" style={{ marginBottom: 4 }}>Designation</label>
+                  {masters?.designations && masters.designations.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomDesig(!isCustomDesig);
+                        if (!isCustomDesig) handleChange('designation', '');
+                        else handleChange('designation', masters.designations[0]?.designation_name || 'Executive');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        padding: 0,
+                        color: 'var(--primary)',
+                        fontSize: '0.72rem',
+                        cursor: 'pointer',
+                        textDecoration: 'underline'
+                      }}
+                    >
+                      {isCustomDesig ? 'Select from list' : 'Custom'}
+                    </button>
+                  )}
+                </div>
+                {!isCustomDesig && masters?.designations && masters.designations.length > 0 ? (
+                  <select
+                    id="select-emp-designation"
+                    className="form-control form-select"
+                    value={formData.designation}
+                    onChange={(e) => {
+                      if (e.target.value === '__custom__') {
+                        setIsCustomDesig(true);
+                        handleChange('designation', '');
+                      } else {
+                        handleChange('designation', e.target.value);
+                      }
+                    }}
+                  >
+                    <option value="">Select Designation</option>
+                    {masters.designations
+                      .filter((d) => d.is_active === 1 || d.designation_name === formData.designation)
+                      .map((d) => (
+                        <option key={d.id || d.designation_code} value={d.designation_name}>
+                          {d.designation_name} {d.designation_code ? `(${d.designation_code})` : ''}
+                        </option>
+                      ))}
+                    <option value="__custom__">+ Enter custom designation...</option>
+                  </select>
+                ) : (
+                  <input
+                    id="input-emp-designation"
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Field Operations Executive"
+                    value={formData.designation}
+                    onChange={(e) => handleChange('designation', e.target.value)}
+                  />
+                )}
               </div>
             </div>
 
@@ -230,26 +514,43 @@ export function AddEmployeeModal({ isOpen, onClose, onCreated, masters }) {
               <div className="form-group">
                 <label className="form-label">Branch</label>
                 <select
+                  id="select-emp-branch"
                   className="form-control form-select"
                   value={formData.branch}
-                  onChange={(e) => handleChange('branch', e.target.value)}
+                  onChange={(e) => handleBranchChange(e.target.value)}
                 >
+                  <option value="">Select Branch</option>
                   {masters?.branches?.map((b) => (
-                    <option key={b.id} value={b.branch_name}>{b.branch_name}</option>
+                    <option key={b.id} value={b.branch_name}>
+                      {b.branch_name} {b.branch_code ? `(${b.branch_code})` : ''}
+                    </option>
                   ))}
                 </select>
               </div>
 
               <div className="form-group">
-                <label className="form-label">Location</label>
+                <label className="form-label">
+                  Location <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 400 }}>(Optional)</span>
+                </label>
                 <select
+                  id="select-emp-location"
                   className="form-control form-select"
                   value={formData.location}
+                  disabled={!formData.branch}
                   onChange={(e) => handleChange('location', e.target.value)}
                 >
-                  {masters?.locations?.map((l) => (
-                    <option key={l.id} value={l.location_name}>{l.location_name}</option>
-                  ))}
+                  {!formData.branch ? (
+                    <option value="">Select Branch First</option>
+                  ) : activeBranchLocations.length === 0 ? (
+                    <option value="">None / Main Office (No sub-locations configured)</option>
+                  ) : (
+                    <>
+                      <option value="">Select Location (Optional)</option>
+                      {activeBranchLocations.map((l) => (
+                        <option key={l.id} value={l.location_name}>{l.location_name}</option>
+                      ))}
+                    </>
+                  )}
                 </select>
               </div>
             </div>
