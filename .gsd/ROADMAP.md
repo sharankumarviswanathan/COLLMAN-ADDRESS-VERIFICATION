@@ -6,8 +6,8 @@ updated: 2026-10-28T19:30:00+05:30
 
 # Roadmap — COLLMAN Address Verification
 
-> **Current Phase:** Phase 2: Photo Evidence Validation & Multi-Lingual OCR Hardening  
-> **Status:** 🟡 Ready to Begin (Phase 1 Audit Complete)  
+> **Current Phase:** Complete (All 5 Phases Finished & Verified)  
+> **Status:** 🟢 Complete (Milestone M1 Ready for Production)  
 > **Safety Notice:** Read-only inspection posture maintained. All test runs operate under strict port and database isolation.
 
 ---
@@ -16,12 +16,12 @@ updated: 2026-10-28T19:30:00+05:30
 
 - [x] **MH-1**: Complete empirical audit of all 19 test files in `server/test/` and feature parity assessment without mutating data or git working tree (REQ-01). *(19/19 test suites verified passing in Plan 1.1; schema and contract audit completed in Plan 1.2; final report consolidated in Plan 1.3)*
 - [x] **MH-2**: Strict automated photo evidence validation across 5 photos (`door_selfie`, `selfie`, `street`, `house`, `landmark`) with 100% elimination of manual employee bypass (REQ-02). *(Plan 2.1 verified: OCR worker recovery, Indic script preservation across 5 languages, compound alphanumeric door numbers, fail-closed anti-fraud checks passing 20/20 tests)*
-- [ ] **MH-3**: Multi-lingual Indian OCR text extraction and address matching supporting English, Hindi, Kannada, Malayalam, Tamil, and Telugu (REQ-03).
-- [ ] **MH-4**: High-precision geospatial distance auditing (Haversine formula) and visual dual-marker comparison maps (REQ-04).
-- [ ] **MH-5**: Database integrity, SQLite foreign key enforcement, and safe incremental schema migrations (REQ-05).
-- [ ] **MH-6**: Role-based access control (RBAC) across Super Admin, Reviewer, and HR Manager roles in the admin portal (REQ-06).
-- [ ] **MH-7**: Branded 3-page BGV verification PDF dossier generation featuring Google Maps imagery and SHA-256 integrity checksums (REQ-07).
-- [ ] **MH-8**: Production build verification (`npm run build:client`) and deployment configuration readiness (REQ-08).
+- [x] **MH-3**: Multi-lingual Indian OCR text extraction and address matching supporting English, Hindi, Kannada, Malayalam, Tamil, and Telugu (REQ-03). *(Plan 2.2 verified across 6 scripts, Indic numerals, phonetic name matching, and fail-closed routing; validated in Plan 5.1 end-to-end regression)*
+- [x] **MH-4**: High-precision geospatial distance auditing (Haversine formula) and visual dual-marker comparison maps (REQ-04). *(Plan 3.1 & 3.2 verified: robust coordinate parsing, exact 0m self-distance, strict 100m fail-closed radius, distance band categorization, and dual-pin map rendering; validated in Plan 5.1)*
+- [x] **MH-5**: Database integrity, SQLite foreign key enforcement, and safe incremental schema migrations (REQ-05). *(Verified across all phases; strict backup SHA-256 hash intact, skip-worktree active, schema verified across 18 tables)*
+- [x] **MH-6**: Role-based access control (RBAC) across Super Admin, Reviewer, and HR Manager roles in the admin portal (REQ-06). *(Plan 4.1 verified: Team Leader case isolation, 403 Forbidden enforcement on unassigned cases, mandatory decision reasons; validated in Plan 5.1)*
+- [x] **MH-7**: Branded 3-page BGV verification PDF dossier generation featuring Google Maps imagery and SHA-256 integrity checksums (REQ-07). *(Plan 4.2 & 5.1 verified: 3-page uncrowded layout, dual map pins, photo proof cards, SHA-256 registration in download area, and Excel exports)*
+- [x] **MH-8**: Production build verification (`npm run build:client`) and deployment configuration readiness (REQ-08). *(Plan 5.2 verified: client Vite production build completed in 5.46s, static assets served via Express, PM2 configuration and environment parameters verified)*
 
 ---
 
@@ -78,23 +78,23 @@ updated: 2026-10-28T19:30:00+05:30
 
 **Plans:**
 - [x] **Plan 4.1: Queue Lifecycle, Re-verification & Decision Flow**  
-  Validate case status lifecycles, reviewer assignments, reviewer remark validations, and immutable audit logs in `verification_cases` and `audit_logs`.
+  *Completed:* Validated case status lifecycles, reviewer assignments, reviewer remark validations, and immutable audit logs in `verification_cases` and `audit_logs`. Enforced mandatory rejection reasons on `VERIFICATION FAILED`, remarks on `REVERIFICATION REQUIRED`, and validated automatic attempt incrementing and progress step reset.
 - [x] **Plan 4.2: Branded BGV PDF Dossier & Excel Export Validation**  
-  Validate PDFKit dossier generation ensuring uncrowded 3-page layout, authentic Google Maps imagery, document SHA-256 hashes, and Excel export consistency.
+  *Completed:* Validated PDFKit dossier generation ensuring uncrowded 3-page layout, authentic Google Maps imagery, document SHA-256 hashes registered in `download_area_files`, and Excel export consistency (`branch_summary`, `dept_summary`). Tested with `backend/test/adminReviewAndReporting.test.js` (9/9 passed; 23/23 isolated suites passed).
 
 ---
 
 ### Phase 5: Full Regression & Deployment Readiness
-**Status:** 🟡 Next  
+**Status:** 🟢 Complete  
 **Objective:** Run end-to-end regression validation, compile production client build, and verify PM2, Nginx, and system deployment scripts.  
 **Depends on:** Phase 4  
 **Requirements:** REQ-08  
 
 **Plans:**
-- [ ] **Plan 5.1: End-to-End Flow & Regression Testing**  
-  Validate complete employee wizard journey from Step 1 to Step 15 through admin review and final report download.
-- [ ] **Plan 5.2: Production Build & Deployment Pipeline Certification**  
-  Run client Vite production build, verify static asset serving in Express, test PM2 ecosystem configuration, and check Ubuntu/Windows deployment script integrity.
+- [x] **Plan 5.1: End-to-End Flow & Regression Testing**  
+  *Completed:* Implemented comprehensive end-to-end integration test suite (`backend/test/endToEndFlowRegression.test.js`) validating the complete employee journey: candidate session token generation, already-submitted lockouts, 4-step wizard progression, Haversine GPS distance & fail-closed 100m thresholds, multilingual OCR component matching, mandatory evidence checks, case queue status transitions, reviewer RBAC case isolation, reverification attempt progression and reset, approval lifecycle, 3-page PDF dossier generation with SHA-256 verification, and Excel analytics export. Integrated into isolated runner (`backend/test/runIsolatedTests.js`) with 24/24 test suites passing (exit code 0).
+- [x] **Plan 5.2: Production Build & Deployment Pipeline Certification**  
+  *Completed:* Successfully compiled production client build with Vite (`npm run build:client`) generating minified bundles in `frontend/dist/`. Verified Express production static asset serving (HTTP 200 on `/` and `/admin/login`). Audited PM2 configuration (`ecosystem.config.cjs`), environment variables, security defaults (fail-closed fallbacks for secrets, OpenStreetMap fallback when Google Maps key is omitted), and verified zero live database mutation with active `skip-worktree` protection.
 
 ---
 
@@ -106,7 +106,7 @@ updated: 2026-10-28T19:30:00+05:30
 | **2** | Photo Evidence Validation & Multi-Lingual OCR Hardening | 🟢 Complete | 2/2 | 100% |
 | **3** | Geospatial & Geocoding Reliability | 🟢 Complete | 2/2 | 100% |
 | **4** | Admin Review Workstation & Reporting Pipeline | 🟢 Complete | 2/2 | 100% |
-| **5** | Full Regression & Deployment Readiness | 🟡 Next | 0/2 | 0% |
+| **5** | Full Regression & Deployment Readiness | 🟢 Complete | 2/2 | 100% |
 
 ---
 
@@ -118,7 +118,7 @@ updated: 2026-10-28T19:30:00+05:30
 | 2 | 2026-10-28 | 2026-10-28 | 1 day |
 | 3 | 2026-10-29 | 2026-10-29 | 1 day |
 | 4 | 2026-10-29 | 2026-10-29 | 1 day |
-| 5 | — | — | — |
+| 5 | 2026-10-29 | 2026-10-29 | 1 day |
 
 ---
 
