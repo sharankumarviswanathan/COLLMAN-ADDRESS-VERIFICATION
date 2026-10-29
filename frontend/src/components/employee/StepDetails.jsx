@@ -55,7 +55,7 @@ export function StepDetails() {
             <div style={{ fontSize: '0.78rem', textTransform: 'uppercase', color: '#64748B', fontWeight: 700 }}>
               Employee Name
             </div>
-            <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#1E1B4B' }}>
+            <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#4A0404' }}>
               {employee.employeeName}
             </div>
           </div>
@@ -65,7 +65,7 @@ export function StepDetails() {
               <div style={{ fontSize: '0.78rem', textTransform: 'uppercase', color: '#64748B', fontWeight: 700 }}>
                 Employee ID
               </div>
-              <div style={{ fontSize: '1rem', fontWeight: 700, color: '#4F46E5' }}>
+              <div style={{ fontSize: '1rem', fontWeight: 700, color: '#991B1B' }}>
                 {employee.employeeId}
               </div>
             </div>

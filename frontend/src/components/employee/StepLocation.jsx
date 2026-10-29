@@ -508,8 +508,8 @@ export function StepLocation() {
                 onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-subtle)')}
                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#FFFFFF')}
               >
-                <MapPin size={15} color="#4F46E5" style={{ flexShrink: 0 }} />
-                <span style={{ color: '#1E1B4B', fontWeight: 500 }}>{item.label}</span>
+                <MapPin size={15} color="#991B1B" style={{ flexShrink: 0 }} />
+                <span style={{ color: '#4A0404', fontWeight: 500 }}>{item.label}</span>
               </div>
             ))}
           </div>
@@ -660,14 +660,14 @@ export function StepLocation() {
           >
             <div>
               <span style={{ color: '#64748B', fontSize: '0.75rem', fontWeight: 600 }}>Latitude:</span>
-              <div style={{ fontWeight: 700, fontFamily: 'monospace', color: '#1E1B4B', fontSize: '0.95rem' }}>
+              <div style={{ fontWeight: 700, fontFamily: 'monospace', color: '#4A0404', fontSize: '0.95rem' }}>
                 {capturedData.latitude?.toFixed(6)}
               </div>
             </div>
 
             <div>
               <span style={{ color: '#64748B', fontSize: '0.75rem', fontWeight: 600 }}>Longitude:</span>
-              <div style={{ fontWeight: 700, fontFamily: 'monospace', color: '#1E1B4B', fontSize: '0.95rem' }}>
+              <div style={{ fontWeight: 700, fontFamily: 'monospace', color: '#4A0404', fontSize: '0.95rem' }}>
                 {capturedData.longitude?.toFixed(6)}
               </div>
             </div>

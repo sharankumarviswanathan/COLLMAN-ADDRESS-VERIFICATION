@@ -115,8 +115,8 @@ export function StepDeclarationReview() {
         padding: '18px',
         margin: '18px 0'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: '#1E1B4B', marginBottom: '8px', fontSize: '1rem' }}>
-          <ShieldCheck size={20} color="#4F46E5" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: '#4A0404', marginBottom: '8px', fontSize: '1rem' }}>
+          <ShieldCheck size={20} color="#991B1B" />
           <span>Employee Declaration</span>
         </div>
 
@@ -124,7 +124,7 @@ export function StepDeclarationReview() {
           "I confirm that the information, location, photographs and documents submitted by me for employee address verification are accurate to the best of my knowledge."
         </p>
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontWeight: 700, fontSize: '0.95rem', color: '#1E1B4B' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontWeight: 700, fontSize: '0.95rem', color: '#4A0404' }}>
           <input
             id="checkbox-declaration"
             type="checkbox"
@@ -133,7 +133,7 @@ export function StepDeclarationReview() {
               setConfirmed(e.target.checked);
               setErrorMsg('');
             }}
-            style={{ width: 20, height: 20, cursor: 'pointer', accentColor: '#4F46E5' }}
+            style={{ width: 20, height: 20, cursor: 'pointer', accentColor: '#991B1B' }}
           />
           <span>I Confirm and Agree</span>
         </label>

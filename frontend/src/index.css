@@ -1438,18 +1438,18 @@ optgroup {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #F1F5F9;
-  color: #0F172A;
+  background: #FAF7F7;
+  color: #1F1212;
 }
 
 .emp-header {
-  background: linear-gradient(135deg, #1E1B4B 0%, #312E81 50%, #4338CA 100%);
+  background: linear-gradient(135deg, #3B0006 0%, #4A0404 40%, #7F1D1D 80%, #991B1B 100%);
   color: #FFFFFF;
   padding: 14px 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  box-shadow: 0 4px 14px rgba(30, 27, 75, 0.25);
+  box-shadow: 0 4px 18px rgba(74, 4, 4, 0.35);
   position: sticky;
   top: 0;
   z-index: 100;
@@ -1465,7 +1465,7 @@ optgroup {
   width: 34px;
   height: 34px;
   background-color: #FFFFFF;
-  color: #4338CA;
+  color: #991B1B;
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
@@ -1493,7 +1493,7 @@ optgroup {
   max-width: 540px;
   width: 100%;
   margin: 0 auto;
-  padding: 16px;
+  padding: 24px 16px 40px 16px;
   display: flex;
   flex-direction: column;
 }
@@ -1503,8 +1503,8 @@ optgroup {
   background-color: #FFFFFF;
   padding: 14px 18px;
   border-radius: var(--radius-md);
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
-  border: 1px solid #E2E8F0;
+  box-shadow: 0 2px 6px rgba(74, 4, 4, 0.06);
+  border: 1px solid #FEE2E2;
 }
 
 .emp-progress-meta {
@@ -1512,20 +1512,20 @@ optgroup {
   justify-content: space-between;
   font-size: 0.85rem;
   font-weight: 700;
-  color: #334155 !important;
+  color: #4A0404 !important;
   margin-bottom: 8px;
 }
 
 .emp-progress-track {
   height: 8px;
-  background-color: #E2E8F0;
+  background-color: #F1E5E5;
   border-radius: var(--radius-full);
   overflow: hidden;
 }
 
 .emp-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #6366F1 0%, #10B981 100%);
+  background: linear-gradient(90deg, #991B1B 0%, #B91C1C 50%, #EF4444 100%);
   border-radius: var(--radius-full);
   transition: width 0.3s ease;
 }
@@ -1535,8 +1535,8 @@ optgroup {
   color: #0F172A !important;
   border-radius: var(--radius-lg);
   padding: 28px 24px;
-  box-shadow: 0 10px 30px -5px rgba(15, 23, 42, 0.08), 0 0 1px 1px rgba(0, 0, 0, 0.06);
-  border: 1px solid #E2E8F0 !important;
+  box-shadow: 0 10px 30px -5px rgba(74, 4, 4, 0.08), 0 0 1px 1px rgba(74, 4, 4, 0.05);
+  border: 1px solid #F3D7D7 !important;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1547,7 +1547,7 @@ optgroup {
 .emp-verify-container h2,
 .emp-verify-container h3,
 .emp-verify-container h4 {
-  color: #0F172A;
+  color: #4A0404;
 }
 
 .emp-verify-container p {
@@ -1557,7 +1557,7 @@ optgroup {
 .emp-step-title {
   font-size: 1.35rem;
   margin-bottom: 8px;
-  color: #1E1B4B !important;
+  color: #4A0404 !important;
   font-weight: 800;
 }
 
@@ -1572,7 +1572,7 @@ optgroup {
 .emp-verify-container .form-label {
   font-size: 0.88rem;
   font-weight: 700;
-  color: #1E1B4B !important;
+  color: #4A0404 !important;
   margin-bottom: 6px;
   display: block;
 }
@@ -1586,7 +1586,7 @@ optgroup {
 .emp-verify-container .form-control {
   width: 100%;
   padding: 12px 14px;
-  border: 1.5px solid #CBD5E1 !important;
+  border: 1.5px solid #E2D4D4 !important;
   border-radius: var(--radius-md);
   background-color: #FFFFFF !important;
   color: #0F172A !important;
@@ -1600,8 +1600,8 @@ optgroup {
 
 .emp-verify-container .form-control:focus {
   outline: none;
-  border-color: #6366F1 !important;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2) !important;
+  border-color: #991B1B !important;
+  box-shadow: 0 0 0 3px rgba(153, 27, 27, 0.2) !important;
   background-color: #FFFFFF !important;
   color: #0F172A !important;
 }
@@ -1609,7 +1609,7 @@ optgroup {
 .emp-verify-container .form-select {
   background-color: #FFFFFF !important;
   color: #0F172A !important;
-  border: 1.5px solid #CBD5E1 !important;
+  border: 1.5px solid #E2D4D4 !important;
 }
 
 .emp-verify-container .form-select option {
@@ -1619,20 +1619,20 @@ optgroup {
 
 /* Buttons in Employee Portal */
 .emp-verify-container .btn-primary {
-  background: linear-gradient(135deg, #6366F1 0%, #4F46E5 100%) !important;
+  background: linear-gradient(135deg, #991B1B 0%, #7F1D1D 50%, #4A0404 100%) !important;
   color: #FFFFFF !important;
   border: none !important;
   font-weight: 700;
   padding: 12px 22px;
   border-radius: var(--radius-full);
-  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
+  box-shadow: 0 4px 14px rgba(153, 27, 27, 0.38);
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .emp-verify-container .btn-primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #4F46E5 0%, #4338CA 100%) !important;
-  box-shadow: 0 6px 18px rgba(79, 70, 229, 0.45);
+  background: linear-gradient(135deg, #B91C1C 0%, #991B1B 50%, #7F1D1D 100%) !important;
+  box-shadow: 0 6px 18px rgba(153, 27, 27, 0.48);
   transform: translateY(-1px);
 }
 

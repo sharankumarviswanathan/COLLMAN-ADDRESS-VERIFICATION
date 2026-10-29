@@ -58,13 +58,16 @@ export function EmployeeWizard() {
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '4px',
-            fontSize: '0.78rem',
-            color: 'rgba(255,255,255,0.85)',
+            gap: '5px',
+            fontSize: '0.8rem',
+            fontWeight: 600,
+            color: '#FFFFFF',
             textDecoration: 'none',
-            padding: '4px 8px',
+            padding: '5px 10px',
             borderRadius: 'var(--radius-sm)',
-            backgroundColor: 'rgba(255,255,255,0.1)'
+            backgroundColor: 'rgba(255,255,255,0.16)',
+            border: '1px solid rgba(255,255,255,0.22)',
+            transition: 'all 0.2s ease'
           }}
         >
           <LogIn size={14} />
