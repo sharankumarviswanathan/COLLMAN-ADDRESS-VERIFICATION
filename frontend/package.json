@@ -1,5 +1,5 @@
 {
-  "name": "collman-address-verification-client",
+  "name": "collman-address-verification-frontend",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -9,7 +9,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "collman-services-address-verification": "file:..",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.16.0",
     "maplibre-gl": "^6.8.0",

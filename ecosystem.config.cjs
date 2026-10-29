@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: 'collman-bgv',
-      script: 'server/index.js',
+      script: 'backend/index.js',
       cwd: __dirname,
       instances: 1,
       autorestart: true,

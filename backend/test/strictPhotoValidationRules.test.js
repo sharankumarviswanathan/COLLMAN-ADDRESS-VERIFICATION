@@ -281,6 +281,134 @@ async function runTests() {
   assert.strictEqual(validDoorWithDigits.valid, true, 'Door selfie with face and door digits must pass');
   console.log('✓ Test 17 Passed: Door Selfie with face and door digits accepted');
 
+  // 18. Compound Indian Alphanumeric Door Numbers (D.No. 14/2B, Plot 42-B, Flat G-04, 13/ए)
+  const compoundDoor1 = await validateImage({
+    photoType: 'door_selfie',
+    clientMetrics: {
+      blurScore: 85,
+      brightness: 130,
+      contrast: 50,
+      faceDetected: true,
+      ocrText: 'D.No. 14/2B, Krishna Enclave'
+    }
+  });
+  assert.strictEqual(compoundDoor1.valid, true, 'D.No. 14/2B must be validly recognized');
+  assert.ok(compoundDoor1.doorNumbersFound.includes('14/2B'), 'Must extract 14/2B');
+
+  const compoundDoor2 = await validateImage({
+    photoType: 'door_selfie',
+    clientMetrics: {
+      blurScore: 85,
+      brightness: 130,
+      contrast: 50,
+      faceDetected: true,
+      ocrText: 'Plot No. 42-B, Sector 5'
+    }
+  });
+  assert.strictEqual(compoundDoor2.valid, true, 'Plot 42-B must be validly recognized');
+  assert.ok(compoundDoor2.doorNumbersFound.includes('42-B'), 'Must extract 42-B');
+
+  const compoundDoor3 = await validateImage({
+    photoType: 'door_selfie',
+    clientMetrics: {
+      blurScore: 85,
+      brightness: 130,
+      contrast: 50,
+      faceDetected: true,
+      ocrText: 'Flat G-04, Ground Floor'
+    }
+  });
+  assert.strictEqual(compoundDoor3.valid, true, 'Flat G-04 must be validly recognized');
+  assert.ok(compoundDoor3.doorNumbersFound.includes('G-04'), 'Must extract G-04');
+
+  const compoundDoor4 = await validateImage({
+    photoType: 'door_selfie',
+    clientMetrics: {
+      blurScore: 85,
+      brightness: 130,
+      contrast: 50,
+      faceDetected: true,
+      ocrText: 'मकान संख्या 13/ए'
+    }
+  });
+  assert.strictEqual(compoundDoor4.valid, true, 'Indic letter door number 13/ए must be normalized and recognized');
+  assert.ok(compoundDoor4.doorNumbersFound.includes('13/A'), 'Must extract normalized 13/A');
+  console.log('✓ Test 18 Passed: Compound Indian door numbers (D.No. 14/2B, Plot 42-B, Flat G-04, 13/ए) accepted');
+
+  // 19. Regional Language Street Boards (Tamil, Hindi, Kannada, Telugu, Malayalam)
+  const regionalStreetTamil = await validateImage({
+    photoType: 'street',
+    clientMetrics: {
+      blurScore: 88,
+      brightness: 135,
+      contrast: 55,
+      faceDetected: false,
+      ocrText: 'அண்ணா நகர் 1வது குறுக்கு தெரு சென்னை'
+    }
+  });
+  assert.strictEqual(regionalStreetTamil.valid, true, 'Tamil street sign board must be accepted');
+
+  const regionalStreetHindi = await validateImage({
+    photoType: 'street',
+    clientMetrics: {
+      blurScore: 88,
+      brightness: 135,
+      contrast: 55,
+      faceDetected: false,
+      ocrText: 'गांधी मार्ग 2nd क्रॉस सड़क'
+    }
+  });
+  assert.strictEqual(regionalStreetHindi.valid, true, 'Hindi street sign board must be accepted');
+
+  const regionalStreetKannada = await validateImage({
+    photoType: 'street',
+    clientMetrics: {
+      blurScore: 88,
+      brightness: 135,
+      contrast: 55,
+      faceDetected: false,
+      ocrText: 'ಎಂ ಜಿ ರಸ್ತೆ ಬೆಂಗಳೂರು'
+    }
+  });
+  assert.strictEqual(regionalStreetKannada.valid, true, 'Kannada street sign board must be accepted');
+
+  const regionalStreetTelugu = await validateImage({
+    photoType: 'street',
+    clientMetrics: {
+      blurScore: 88,
+      brightness: 135,
+      contrast: 55,
+      faceDetected: false,
+      ocrText: 'నెహ్రూ వీధి హైదరాబాద్'
+    }
+  });
+  assert.strictEqual(regionalStreetTelugu.valid, true, 'Telugu street sign board must be accepted');
+
+  const regionalStreetMalayalam = await validateImage({
+    photoType: 'street',
+    clientMetrics: {
+      blurScore: 88,
+      brightness: 135,
+      contrast: 55,
+      faceDetected: false,
+      ocrText: 'എം ജി റോഡ് കൊച്ചി'
+    }
+  });
+  assert.strictEqual(regionalStreetMalayalam.valid, true, 'Malayalam street sign board must be accepted');
+  console.log('✓ Test 19 Passed: Regional street boards (Tamil, Hindi, Kannada, Telugu, Malayalam) verified');
+
+  // 20. Safe OCR Worker Reset & Recovery
+  const { resetIndianLanguageWorker } = require('../utils/indianLanguageOcr');
+  await resetIndianLanguageWorker();
+
+  // Validate that after reset, validation recovers without throwing
+  const recoveryReport = await validateImage({
+    photoType: 'landmark',
+    clientMetrics: { blurScore: 85, brightness: 140, contrast: 60 }
+  });
+  assert.strictEqual(recoveryReport.valid, true, 'Validation must function normally after worker reset');
+  console.log('✓ Test 20 Passed: OCR worker reset & recovery safely executed');
+
   console.log('\n================================================================');
   console.log(' ALL STRICT PHOTO VALIDATION TESTS PASSED SUCCESSFULLY!          ');
   console.log('================================================================\n');

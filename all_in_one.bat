@@ -75,28 +75,28 @@ if not exist "node_modules\" (
     call npm install
 )
 
-REM 2. Check client dependencies
-if not exist "client\node_modules\" (
-    echo [INFO] Installing client dependencies...
-    call npm install --prefix client
+REM 2. Check frontend dependencies
+if not exist "frontend\node_modules\" (
+    echo [INFO] Installing frontend dependencies...
+    call npm install --prefix frontend
 )
 
 REM 3. Check SQLite database
-if not exist "server\db\collman_bgv.db" (
+if not exist "backend\db\collman_bgv.db" (
     echo [INFO] Database not found. Seeding initial admin and test data...
     call npm run seed
 )
 
 REM 4. Launch Backend
 echo [INFO] Launching Backend Server on http://localhost:5000 ...
-start "Collman Backend (Port 5000)" cmd /k "title Collman Backend && cd /d ""%~dp0"" && node server/index.js"
+start "Collman Backend (Port 5000)" cmd /k "title Collman Backend && cd /d ""%~dp0"" && node backend/index.js"
 
 REM 5. Short delay
 timeout /t 2 >nul 2>&1
 
 REM 6. Launch Frontend
 echo [INFO] Launching Frontend Vite Dev Server on http://localhost:3000 ...
-start "Collman Frontend (Port 3000)" cmd /k "title Collman Frontend && cd /d ""%~dp0"" && npm run dev:client"
+start "Collman Frontend (Port 3000)" cmd /k "title Collman Frontend && cd /d ""%~dp0"" && npm run dev:frontend"
 
 REM 7. Wait and Open Browser
 timeout /t 3 >nul 2>&1
@@ -128,18 +128,18 @@ echo  Starting Collman Services BGV (Production Mode)
 echo ==============================================================================
 echo.
 
-if not exist "client\dist\" (
-    echo [INFO] Production bundle not found in client\dist. Building now...
-    call npm run build:client
+if not exist "frontend\dist\" (
+    echo [INFO] Production bundle not found in frontend\dist. Building now...
+    call npm run build:frontend
 )
 
-if not exist "server\db\collman_bgv.db" (
+if not exist "backend\db\collman_bgv.db" (
     echo [INFO] Database not found. Seeding initial data...
     call npm run seed
 )
 
 echo [INFO] Starting Production Server on Port 5000 (Serving API + Frontend)...
-start "Collman Production Server" cmd /k "title Collman Production Server && cd /d ""%~dp0"" && set NODE_ENV=production && node server/index.js"
+start "Collman Production Server" cmd /k "title Collman Production Server && cd /d ""%~dp0"" && set NODE_ENV=production && node backend/index.js"
 
 timeout /t 3 >nul 2>&1
 start http://localhost:5000/admin/login
@@ -161,8 +161,8 @@ echo.
 echo [1/2] Installing Root Dependencies...
 call npm install
 echo.
-echo [2/2] Installing Client Dependencies...
-call npm install --prefix client
+echo [2/2] Installing Frontend Dependencies...
+call npm install --prefix frontend
 echo.
 echo [SUCCESS] All dependencies installed successfully!
 pause
@@ -177,10 +177,10 @@ echo ===========================================================================
 echo  Compiling Client Production Assets (Vite)
 echo ==============================================================================
 echo.
-call npm run build:client
+call npm run build:frontend
 echo.
 if %ERRORLEVEL% EQU 0 (
-    echo [SUCCESS] Client build created in client\dist\
+    echo [SUCCESS] Frontend build created in frontend\dist\
 ) else (
     echo [ERROR] Build failed. Review errors above.
 )
@@ -251,7 +251,7 @@ for /f "tokens=1-2 delims=: " %%a in ('time /t') do (set "MYTIME=%%a%%b")
 set "BACKUP_FILE=%BACKUP_DIR%\collman_backup_%MYDATE%_%MYTIME%.zip"
 
 echo Creating backup at: %BACKUP_FILE%
-powershell -NoProfile -Command "Compress-Archive -Path 'server\db\collman_bgv.db', 'server\uploads', 'server\downloads' -DestinationPath '%BACKUP_FILE%' -Force"
+powershell -NoProfile -Command "Compress-Archive -Path 'backend\db\collman_bgv.db', 'backend\uploads', 'backend\downloads' -DestinationPath '%BACKUP_FILE%' -Force"
 
 if exist "%BACKUP_FILE%" (
     echo.

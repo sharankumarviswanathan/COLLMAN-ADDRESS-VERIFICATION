@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs');
-const { getIndianLanguageWorker } = require('./indianLanguageOcr');
+const { getIndianLanguageWorker, resetIndianLanguageWorker, normalizeIndicNumerals } = require('./indianLanguageOcr');
 
 function isValidImageBuffer(buf) {
   if (!buf || !Buffer.isBuffer(buf) || buf.length < 50) return false;
@@ -27,7 +27,18 @@ const STREET_KEYWORDS = [
   'main', 'cross', 'colony', 'layout', 'gali', 'marg', 'block', 'ward', 'sector',
   'highway', 'hwy', 'path', 'drive', 'dr', 'circle', 'bypass', 'close', 'terrace',
   'india', 'chennai', 'tamil', 'nadu', 'delhi', 'mumbai', 'bengaluru', 'bangalore',
-  'pincode', 'pin'
+  'pincode', 'pin',
+  // Regional Indian street sign terms
+  // Tamil
+  'தெரு', 'சாலை', 'நகர்', 'சந்து', 'வழி', 'குறுக்கு', 'பாதை', 'வட்டம்',
+  // Hindi
+  'सड़क', 'मार्ग', 'गली', 'नगर', 'रास्ता', 'कॉलोनी', 'लेन', 'चौक', 'खंड',
+  // Telugu
+  'వీధి', 'రోడ్డు', 'నగర్', 'కాలనీ', 'సందు', 'మార్గం', 'సర్కిల్',
+  // Kannada
+  'ರಸ್ತೆ', 'ಬೀದಿ', 'ನಗರ', 'ಬಡಾವಣೆ', 'ಕ್ರಾಸ್', 'ಲೇನ್', 'ವೃತ್ತ',
+  // Malayalam
+  'തെരുവ്', 'റോഡ്', 'നഗർ', 'വഴി', 'പാത', 'ലൈൻ'
 ];
 
 /**
@@ -91,22 +102,24 @@ function detectDocumentOrScreen(text) {
  */
 function extractDoorNumbers(text) {
   if (!text) return [];
+  const normalized = normalizeIndicNumerals(text);
   const patterns = [
-    /#?\s*\d{1,5}(?:\s*[\/\-]\s*[A-Za-z0-9]+)?/g,
-    /(?:no|door|flat|plot|house)\.?\s*#?\s*\d{1,5}[A-Za-z]?/gi,
-    /\b\d{1,5}[A-Za-z]?\b/g
+    // Labeled door formats: D.No. 14/2B, Flat G-04, Plot 42-B, House #12, Door No 14/B
+    /(?:d\.?\s*no\.?|door\s*no\.?|flat\s*no\.?|plot\s*no\.?|house\s*no\.?|d\/o|no\.?|door|flat|plot|house)\s*#?\s*([A-Za-z0-9]+(?:[\/\-][A-Za-z0-9]+)*)/gi,
+    // Hash prefix: #14/2B, #42-B
+    /#\s*([A-Za-z0-9]+(?:[\/\-][A-Za-z0-9]+)*)/g,
+    // Standalone alphanumeric door codes: 14/2B, G-04, 42-B, 102A, 12-4/A
+    /\b([A-Za-z]?\d{1,5}(?:[\/\-][A-Za-z0-9]+)+|\d{1,5}[A-Za-z]?|[A-Za-z]\-?\d{1,4}[A-Za-z]?)\b/g
   ];
 
   const found = new Set();
   for (const regex of patterns) {
-    const matches = text.match(regex);
-    if (matches) {
-      matches.forEach(m => {
-        const clean = m.trim().replace(/^#\s*/, '');
-        if (clean.length > 0 && /\d/.test(clean)) {
-          found.add(clean);
-        }
-      });
+    let match;
+    while ((match = regex.exec(normalized)) !== null) {
+      const candidate = (match[1] || match[0]).trim().replace(/^#\s*/, '');
+      if (candidate.length > 0 && (/\d/.test(candidate) || /^[A-Za-z]\-?\d+/.test(candidate))) {
+        found.add(candidate);
+      }
     }
   }
   return Array.from(found);
@@ -188,8 +201,7 @@ async function validateImage({ imageBuffer, photoType, clientMetrics = {}, hrAdd
       }
     } catch (ocrErr) {
       console.warn('OCR error during image validation:', ocrErr.message);
-      sharedWorker = null;
-      workerInitPromise = null;
+      await resetIndianLanguageWorker();
     }
   }
   result.extractedText = (ocrText || '').trim();
@@ -305,16 +317,19 @@ async function validateImage({ imageBuffer, photoType, clientMetrics = {}, hrAdd
       }
 
       const lowerText = (ocrText || '').toLowerCase();
-      const cleanAlphaNumeric = lowerText.replace(/[^a-z0-9\s]/g, ' ');
-      const words = cleanAlphaNumeric.split(/\s+/).filter(w => w.length >= 2);
+      // Clean non-word characters while strictly PRESERVING Letters (\p{L}), Marks (\p{M}), and Numbers (\p{N})
+      const cleanIndicText = lowerText.replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ');
+      const words = cleanIndicText.split(/\s+/).filter(w => w.length >= 2);
 
       const hasStreetKeyword = STREET_KEYWORDS.some(kw => lowerText.includes(kw));
       const hasRoadNumber = /\b\d{1,4}(?:st|nd|rd|th)?\s+(?:cross|main|street|road|st|rd|feet|ft|lane|block|sector|ward)\b/i.test(lowerText) ||
-                            /(?:cross|main|street|road|st|rd|lane|block|sector|ward)\s+#?\d{1,4}/i.test(lowerText);
+                            /(?:cross|main|street|road|st|rd|lane|block|sector|ward)\s+#?\d{1,4}/i.test(lowerText) ||
+                            /(?:தெரு|சாலை|நகர்|சந்து|मार्ग|सड़क|ರಸ್ತೆ|ವೀధి|റോഡ്)\s*#?\d{1,4}/u.test(lowerText) ||
+                            /#?\d{1,4}\s*(?:தெரு|சாலை|நகர்|சந்து|मार्ग|सड़क|ರಸ್ತೆ|ವೀధి|റോഡ്)/u.test(lowerText);
 
       let matchesHrStreet = false;
       if (hrAddress) {
-        const hrTokens = hrAddress.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 4);
+        const hrTokens = hrAddress.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length >= 3);
         matchesHrStreet = hrTokens.some(tok => lowerText.includes(tok));
       }
 
@@ -323,7 +338,7 @@ async function validateImage({ imageBuffer, photoType, clientMetrics = {}, hrAdd
       const hasValidStreetText = (hasStreetKeyword && words.length >= 1) ||
                                  hasRoadNumber ||
                                  matchesHrStreet ||
-                                 (words.length >= 2 && words.some(w => w.length >= 4));
+                                 (words.length >= 2 && words.some(w => w.length >= 3));
 
       if (!hasValidStreetText) {
         result.valid = false;

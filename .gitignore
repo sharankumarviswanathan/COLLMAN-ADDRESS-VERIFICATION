@@ -1,16 +1,30 @@
 # Dependencies
 node_modules/
+frontend/node_modules/
 client/node_modules/
+backend/node_modules/
+
+# Backward Compatibility Junctions
+/client
+/server
 
 # Production Build Output
+frontend/dist/
 client/dist/
 
 # SQLite Database and Journals (keep in backup instead of public git)
+backend/db/*.db-journal
+backend/db/*.db-wal
+backend/db/*.db-shm
 server/db/*.db-journal
 server/db/*.db-wal
 server/db/*.db-shm
 
 # Runtime Uploads & Generated Downloads
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/downloads/*
+!backend/downloads/.gitkeep
 server/uploads/*
 !server/uploads/.gitkeep
 server/downloads/*

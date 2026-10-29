@@ -96,13 +96,13 @@ fi
 log_header "Step 4: Preparing Application Folders & Permissions"
 cd "$APP_DIR"
 
-mkdir -p "$APP_DIR/server/uploads"
-mkdir -p "$APP_DIR/server/downloads"
-mkdir -p "$APP_DIR/server/db"
+mkdir -p "$APP_DIR/backend/uploads"
+mkdir -p "$APP_DIR/backend/downloads"
+mkdir -p "$APP_DIR/backend/db"
 mkdir -p "$APP_DIR/logs"
 
 # Ensure runtime directories are writable
-chmod -R 775 "$APP_DIR/server/uploads" "$APP_DIR/server/downloads" "$APP_DIR/server/db" "$APP_DIR/logs"
+chmod -R 775 "$APP_DIR/backend/uploads" "$APP_DIR/backend/downloads" "$APP_DIR/backend/db" "$APP_DIR/logs"
 chown -R "$REAL_USER:$REAL_USER" "$APP_DIR"
 log_success "Storage and log directories initialized with proper permissions."
 
@@ -135,24 +135,24 @@ log_info "Installing root backend dependencies..."
 sudo -u "$REAL_USER" npm install
 
 log_info "Installing client frontend dependencies..."
-sudo -u "$REAL_USER" npm install --prefix client
+sudo -u "$REAL_USER" npm install --prefix frontend
 log_success "All dependencies installed successfully."
 
 # ----------------- 8. Build Frontend (Vite) -----------------
 log_header "Step 7: Compiling Client Production Assets (Vite)"
-log_info "Building optimized React frontend bundle into client/dist..."
-sudo -u "$REAL_USER" npm run build:client
+log_info "Building optimized React frontend bundle into frontend/dist..."
+sudo -u "$REAL_USER" npm run build:frontend
 log_success "Frontend production build created."
 
 # ----------------- 9. Database Initialization & Seeding -----------------
 log_header "Step 8: Database Setup"
-DB_FILE="$APP_DIR/server/db/collman_bgv.db"
+DB_FILE="$APP_DIR/backend/db/collman_bgv.db"
 if [ ! -f "$DB_FILE" ]; then
   log_info "Database file not found. Running seed script to initialize admin and sample data..."
   sudo -u "$REAL_USER" npm run seed
   log_success "Database initialized and seeded."
 else
-  log_info "Existing SQLite database found at server/db/collman_bgv.db. Skipping re-seed."
+  log_info "Existing SQLite database found at backend/db/collman_bgv.db. Skipping re-seed."
 fi
 
 # ----------------- 10. PM2 Service Configuration -----------------
@@ -198,7 +198,7 @@ server {
 
     # Static Vite build assets with long-term caching
     location /assets/ {
-        alias ${APP_DIR}/client/dist/assets/;
+        alias ${APP_DIR}/frontend/dist/assets/;
         expires 1y;
         add_header Cache-Control "public, max-age=31536000, immutable";
         access_log off;
@@ -206,14 +206,14 @@ server {
 
     # Candidate uploads (ID cards, verification photos, utility bills)
     location /uploads/ {
-        alias ${APP_DIR}/server/uploads/;
+        alias ${APP_DIR}/backend/uploads/;
         expires 7d;
         add_header Cache-Control "public, max-age=604800";
     }
 
     # Generated PDF reports and exports
     location /downloads/ {
-        alias ${APP_DIR}/server/downloads/;
+        alias ${APP_DIR}/backend/downloads/;
         expires 1d;
         add_header Cache-Control "no-cache";
     }

@@ -19,7 +19,7 @@ server {
 
     # Serve built frontend static assets with cache headers
     location /assets/ {
-        alias {{APP_DIR}}/client/dist/assets/;
+        alias {{APP_DIR}}/frontend/dist/assets/;
         expires 1y;
         add_header Cache-Control "public, max-age=31536000, immutable";
         access_log off;
@@ -27,14 +27,14 @@ server {
 
     # Candidate uploaded documents & photos
     location /uploads/ {
-        alias {{APP_DIR}}/server/uploads/;
+        alias {{APP_DIR}}/backend/uploads/;
         expires 7d;
         add_header Cache-Control "public, max-age=604800";
     }
 
     # Generated PDF verification reports & audit files
     location /downloads/ {
-        alias {{APP_DIR}}/server/downloads/;
+        alias {{APP_DIR}}/backend/downloads/;
         expires 1d;
         add_header Cache-Control "no-cache";
     }

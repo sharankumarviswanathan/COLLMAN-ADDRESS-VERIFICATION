@@ -28,27 +28,27 @@ if not exist "node_modules\" (
     echo [INFO] Installing root dependencies...
     call npm install
 )
-if not exist "client\node_modules\" (
-    echo [INFO] Installing client dependencies...
-    call npm install --prefix client
+if not exist "frontend\node_modules\" (
+    echo [INFO] Installing frontend dependencies...
+    call npm install --prefix frontend
 )
 
 REM Check SQLite Database
-if not exist "server\db\collman_bgv.db" (
+if not exist "backend\db\collman_bgv.db" (
     echo [INFO] Database not found. Seeding initial admin and test data...
     call npm run seed
 )
 
 REM Start Backend
 echo [INFO] Starting Backend Server (Port 5000)...
-start "Collman Backend (Port 5000)" cmd /k "title Collman Backend && cd /d ""%~dp0"" && node server/index.js"
+start "Collman Backend (Port 5000)" cmd /k "title Collman Backend && cd /d ""%~dp0"" && node backend/index.js"
 
 REM Short delay
 timeout /t 2 >nul 2>&1
 
 REM Start Frontend
 echo [INFO] Starting Frontend Dev Server (Port 3000)...
-start "Collman Frontend (Port 3000)" cmd /k "title Collman Frontend && cd /d ""%~dp0"" && npm run dev:client"
+start "Collman Frontend (Port 3000)" cmd /k "title Collman Frontend && cd /d ""%~dp0"" && npm run dev:frontend"
 
 REM Auto-open browser
 timeout /t 3 >nul 2>&1

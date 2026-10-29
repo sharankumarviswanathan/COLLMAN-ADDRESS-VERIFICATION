@@ -42,7 +42,8 @@ async function getIndianLanguageWorker() {
       try {
         console.log(`[OCR] Initializing multi-language Tesseract worker [${SUPPORTED_OCR_LANGUAGES.join(', ')}]...`);
         const worker = await createWorker(SUPPORTED_OCR_LANGUAGES, undefined, {
-          langPath: tessdataPath
+          langPath: tessdataPath,
+          gzip: false
         });
         sharedIndianWorker = worker;
         console.log('[OCR] Successfully initialized 6-language Indian OCR worker.');
@@ -51,7 +52,8 @@ async function getIndianLanguageWorker() {
         console.warn('[OCR] Failed to initialize all 6 languages, falling back to eng+tam+hin:', err.message);
         try {
           const fallbackWorker = await createWorker(['eng', 'tam', 'hin'], undefined, {
-            langPath: tessdataPath
+            langPath: tessdataPath,
+            gzip: false
           });
           sharedIndianWorker = fallbackWorker;
           return fallbackWorker;
@@ -59,7 +61,8 @@ async function getIndianLanguageWorker() {
           console.warn('[OCR] Failed fallback to eng+tam+hin, falling back to eng+tam:', err2.message);
           try {
             const fallback2 = await createWorker(['eng', 'tam'], undefined, {
-              langPath: tessdataPath
+              langPath: tessdataPath,
+              gzip: false
             });
             sharedIndianWorker = fallback2;
             return fallback2;
@@ -67,7 +70,8 @@ async function getIndianLanguageWorker() {
             console.warn('[OCR] Final fallback to eng:', err3.message);
             try {
               const engWorker = await createWorker('eng', undefined, {
-                langPath: tessdataPath
+                langPath: tessdataPath,
+                gzip: false
               });
               sharedIndianWorker = engWorker;
               return engWorker;
@@ -307,15 +311,30 @@ function transliterateIndicToLatin(str) {
 async function recognizeImageBuffer(imageBuffer) {
   if (!imageBuffer) return '';
   const worker = await getIndianLanguageWorker();
-  if (!worker) return '';
   const ret = await worker.recognize(imageBuffer);
   return ret?.data?.text || '';
+}
+
+/**
+ * Safely reset the shared Tesseract worker on failure or worker crash
+ */
+async function resetIndianLanguageWorker() {
+  if (sharedIndianWorker) {
+    try {
+      await sharedIndianWorker.terminate();
+    } catch (termErr) {
+      // Ignore termination error on already stopped or terminating worker
+    }
+    sharedIndianWorker = null;
+  }
+  workerInitPromise = null;
 }
 
 module.exports = {
   SUPPORTED_OCR_LANGUAGES,
   getIndianLanguageWorker,
   getDualLanguageWorker,
+  resetIndianLanguageWorker,
   normalizeIndicNumerals,
   detectDocumentLanguage,
   transliterateIndicToLatin,
