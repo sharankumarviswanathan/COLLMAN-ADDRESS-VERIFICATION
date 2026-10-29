@@ -553,7 +553,7 @@ async function main() {
   console.log(` Isolated Port:          ${TEST_PORT}`);
   console.log(` Unique Test DB:         ${tempDbPath}`);
   console.log(` Unique Test Downloads:  ${tempDownloadsDir}`);
-  console.log(' Total Suites Scheduled: 19 test suites in 3 deterministic tiers');
+  console.log(' Total Suites Scheduled: 23 test suites in 3 deterministic tiers');
   console.log('================================================================\n');
 
   let overallSuccess = true;
@@ -578,13 +578,16 @@ async function main() {
     // TIER 1: Pure Unit Tests (Independent of DB & Server)
     // =============================================================
     console.log('================================================================');
-    console.log(' TIER 1: PURE UNIT TESTS (2 SUITES)');
+    console.log(' TIER 1: PURE UNIT TESTS (5 SUITES)');
     console.log(' (Executed independently without database or server)');
     console.log('================================================================');
 
     const tier1Suites = [
       { file: 'strictPhotoValidationRules.test.js', timeoutMs: 15000 },
-      { file: 'googleGeocoding.test.js', timeoutMs: 15000 }
+      { file: 'googleGeocoding.test.js', timeoutMs: 15000 },
+      { file: 'multiLanguageOcrAndMatchScoring.test.js', timeoutMs: 25000 },
+      { file: 'geospatialAndTolerance.test.js', timeoutMs: 15000 },
+      { file: 'mapTileAndAddressMatching.test.js', timeoutMs: 15000 }
     ];
 
     for (const suite of tier1Suites) {
@@ -673,7 +676,7 @@ async function main() {
     // TIER 3: HTTP Server Integration Tests (Port 5099)
     // =============================================================
     console.log('\n================================================================');
-    console.log(' TIER 3: HTTP SERVER INTEGRATION TESTS (12 SUITES)');
+    console.log(' TIER 3: HTTP SERVER INTEGRATION TESTS (13 SUITES)');
     console.log(` Validating Port ${TEST_PORT} Availability & Launching Isolated Server`);
     console.log('================================================================');
 
@@ -702,7 +705,8 @@ async function main() {
       { file: 'test_perms.cjs', timeoutMs: 25000 },
       { file: 'zeroLocationBranch.test.js', timeoutMs: 25000 },
       { file: 'employeeCrud.test.js', timeoutMs: 25000 },
-      { file: 'userEdit.test.js', timeoutMs: 25000 }
+      { file: 'userEdit.test.js', timeoutMs: 25000 },
+      { file: 'adminReviewAndReporting.test.js', timeoutMs: 35000 }
     ];
 
     for (const suite of tier3Suites) {
@@ -824,12 +828,12 @@ async function main() {
       const finalUnconfirmedStarted = trackedProcesses.filter((e) => e.started && !e.confirmedStopped);
       const hasTeardownErrors = teardownErrors.length > 0;
       const allProcessesConfirmed = finalUnconfirmedStarted.length === 0;
-      const allSuitesRan = suiteResults.length === 19;
+      const allSuitesRan = suiteResults.length === 23;
       const allSuitesPassed = allSuitesRan && suiteResults.every((s) => s.success);
       const isSuccess = overallSuccess && allSuitesPassed && allProcessesConfirmed && !hasTeardownErrors;
 
       console.log('\n================================================================');
-      console.log(' PLAN 1.1 ALL-SUITE EXECUTION SUMMARY (19 SUITES)               ');
+      console.log(' COMPLETE ALL-SUITE EXECUTION SUMMARY (23 SUITES)               ');
       console.log('================================================================');
       console.log(' #  | Suite Name                                | Tier          | Status  | Time (ms)');
       console.log('----------------------------------------------------------------');
@@ -843,12 +847,12 @@ async function main() {
         console.log(` ${num} | ${name} | ${tier} | ${status} | ${time}`);
       });
 
-      if (suiteResults.length < 19) {
-        console.log(`\n⚠️  Only ${suiteResults.length} of 19 test suites executed due to early termination.`);
+      if (suiteResults.length < 23) {
+        console.log(`\n⚠️  Only ${suiteResults.length} of 23 test suites executed due to early termination.`);
       }
 
       console.log('----------------------------------------------------------------');
-      console.log(`Total Suites Ran:      ${suiteResults.length} / 19`);
+      console.log(`Total Suites Ran:      ${suiteResults.length} / 23`);
       console.log(`Suites Passed:         ${suiteResults.filter((s) => s.success).length}`);
       console.log(`Suites Failed:         ${suiteResults.filter((s) => !s.success).length}`);
       console.log(`Subprocesses Stopped:  ${allProcessesConfirmed ? 'ALL CONFIRMED ✓' : 'UNCONFIRMED / FAILED ❌'}`);

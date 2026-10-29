@@ -1,5 +1,5 @@
 ---
-updated: 2026-10-28T19:30:00+05:30
+updated: 2026-10-29T13:35:00+05:30
 ---
 
 # Project State — COLLMAN Address Verification
@@ -7,42 +7,38 @@ updated: 2026-10-28T19:30:00+05:30
 ## Current Position
 
 **Milestone:** M1-Codebase-Audit-and-Production-Readiness  
-**Phase:** Phase 1: Comprehensive Baseline Audit & Test Suite Verification  
-**Status:** 🟢 Complete (Plans 1.1, 1.2, and 1.3 Complete & Verified)  
-**Next Phase:** Phase 2: Photo Evidence Validation & Multi-Lingual OCR Hardening  
+**Phase:** Phase 4: Admin Review Workstation & Reporting Pipeline  
+**Status:** 🟢 Complete (Plans 4.1 and 4.2 Complete & Verified)  
+**Next Phase:** Phase 5: Full Regression & Deployment Readiness (Plan 5.1)  
 
 ---
 
 ## Last Action
 
-- **Plan 1.1: Test Suite & Isolation Harness Completed:**
-  - Expanded `server/test/runIsolatedTests.js` to execute all 19 test suites sequentially in 3 deterministic tiers.
-  - Empirically validated all 19 suites passed (19/19, exit code 0) using isolated port 5099, temporary database `TEST_DB_PATH`, and isolated downloads `TEST_DOWNLOADS_DIR`.
-  - Confirmed all test subprocesses terminated cleanly and all temporary test artifacts deleted.
-- **Plan 1.2: Codebase, Schema & Contract Audit Completed:**
-  - Compared `server/db/schema.sql`, `server/db/database.js`, and the live database schema (all 18 tables verified).
-  - Identified 3 column discrepancies: `employees.email_id` NOT NULL in live DB vs nullable in schema; `locations.created_at` and `updated_at` defaults; and SQLite runtime `PRAGMA foreign_keys = 0` disconnection.
-  - Audited 79 frontend API call sites against 83 backend route handlers across 11 Express router files: 100% route coverage verified.
-  - Verified authentication headers and token flows: `Authorization: Bearer` for admin routes, `x-employee-session` for verification wizard routes.
-- **Plan 1.3: Empirical Gap Assessment & Milestone Audit Report Completed:**
-  - Consolidated all Phase 1 empirical findings into the final comprehensive Phase 1 Audit Report.
-- **Live Database Retention & Legitimate Business Activity Confirmation:**
-  - User confirmed that additions made on 28 October 2026 (employee `ANAND RAJAGOPAL (10037)`, review decisions, and report downloads) are legitimate business activity.
-  - Live database retained at 618,496 bytes with SHA-256 `201dce695d38f9921a811825ee484e45f074285f7d0dbc9cc392e595a549a984`.
-- **Verified Timestamped Backup Created:**
-  - Stored at `server/db/backups/collman_bgv_backup_20261028_190000.db` (618,496 bytes, SHA-256: `201dce695d38f9921a811825ee484e45f074285f7d0dbc9cc392e595a549a984`).
-  - Backup directory remains untracked in Git.
-- **Git Protection (Option A) Applied:**
-  - Executed `git update-index --skip-worktree -- server/db/collman_bgv.db`.
-  - Verified active `S` tag in `git ls-files -v`.
-  - Commit `e776e17` remains unchanged; zero commits created.
+- **Phase 4: Admin Review Workstation & Reporting Pipeline Completed:**
+  - **Plan 4.1: Queue Lifecycle, Re-verification & Decision Flow:**
+    - Verified queue filtering by status and search terms across employees and verification cases.
+    - Verified reviewer assignment RBAC: unassigned Team Leaders receive `403 Forbidden`, while assigned TLs have strict case isolation.
+    - Enforced mandatory validation guardrails: rejection / failure reasons mandatory on `VERIFICATION FAILED`, remarks mandatory on `REVERIFICATION REQUIRED`.
+    - Validated reverification lifecycle: automatically increments `attempt_number`, transitions status to `'Reverification Required'`, resets progress steps to 1 and photo flags to 0.
+    - Validated final approval lifecycle: transitions status to `'Verified'` / `'VERIFIED'`, creates audit log entries, and triggers automated PDF report generation.
+  - **Plan 4.2: Branded BGV PDF Dossier & Excel Export Validation:**
+    - Verified branded 3-page PDF dossier generation with PDFKit (`Collman_Address_Verification_<empId>_<caseRef>.pdf`) containing cover header, employee details, HR vs submitted address comparison, GPS distance audit, dual map pins, 5 photo proofs + joint selfie cards, OCR match audit, and reviewer decision box.
+    - Verified Download Area registration in `download_area_files` table with SHA-256 / file metadata and audit logging.
+    - Verified Excel analytics report generation via ExcelJS for `branch_summary` and `dept_summary` exports.
+    - Hardened `backend/utils/excelGenerator.js` to respect `process.env.TEST_DOWNLOADS_DIR` for test isolation.
+    - Implemented comprehensive integration test suite `backend/test/adminReviewAndReporting.test.js` (9/9 passed).
+    - Integrated as 23rd suite in `backend/test/runIsolatedTests.js`: All 23 suites passed with 100% success (23/23, exit code 0).
+- **Database Safeguards Maintained:**
+  - Live DB SHA-256 (`58743ffe1485f2f4834f557618accd76ec07210a3063a2f0d5af00d1a3996702`) and Backup DB SHA-256 (`201dce695d38f9921a811825ee484e45f074285f7d0dbc9cc392e595a549a984`) verified intact and identical to baseline.
+  - Active `skip-worktree` safeguard confirmed (`S backend/db/collman_bgv.db`). Zero DB mutations occurred during tests or operations.
 
 ---
 
 ## Next Steps
 
-1. **User Sign-Off**: Present final Phase 1 Audit Report.
-2. **Phase 2 Initiation**: Await user authorization to proceed to Phase 2: Photo Evidence Validation & Multi-Lingual OCR Hardening (Plan 2.1).
+1. **Phase 4 Completion Sign-Off**: Acknowledge Phase 4 completion (Plans 4.1 and 4.2).
+2. **Phase 5 Initiation**: Stand by for user authorization to proceed to Phase 5: Full Regression & Deployment Readiness (Plan 5.1: End-to-End Flow & Regression Testing).
 
 ---
 

@@ -822,6 +822,7 @@ async function performDocumentAddressMatch(employee, progress) {
       employeeConfirmedAddressMatch: 'NOT MATCH',
       overallResult: 'REVIEW REQUIRED',
       statusMessage: 'NO DOCUMENT ATTACHED',
+      requiresManualReview: true,
       details: 'No address proof document has been uploaded for this case.',
       languageDetection: null,
       detectedLanguages: [],

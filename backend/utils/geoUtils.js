@@ -12,6 +12,131 @@
  */
 
 /**
+ * Parse and validate geographic latitude and longitude coordinates.
+ * Supports:
+ * - (lat, lon) as numbers or numeric strings (e.g., 13.0827, 80.2707 or '13.0827', '80.2707')
+ * - String pair '13.0827, 80.2707' or '13.0827 N, 80.2707 E'
+ * - Coordinate object { lat, lng } or { latitude, longitude }
+ * - Array [latitude, longitude]
+ * Validates:
+ * - Latitude: -90 <= lat <= 90
+ * - Longitude: -180 <= lon <= 180
+ */
+function parseCoordinates(latInput, lonInput) {
+  let rawLat = latInput;
+  let rawLon = lonInput;
+
+  // Case 1: Coordinate object or array
+  if (latInput && typeof latInput === 'object') {
+    if (Array.isArray(latInput)) {
+      rawLat = latInput[0];
+      rawLon = latInput[1];
+    } else {
+      rawLat = latInput.latitude !== undefined ? latInput.latitude : latInput.lat;
+      rawLon = latInput.longitude !== undefined ? latInput.longitude : (latInput.lng !== undefined ? latInput.lng : latInput.lon);
+    }
+  } else if (typeof rawLat === 'string' && (rawLon === undefined || rawLon === null)) {
+    // Case 2: Single string argument "13.0827, 80.2707" or "33.8688 S, 151.2093 E"
+    let parts;
+    if (rawLat.includes(',') || rawLat.includes(';')) {
+      parts = rawLat.split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+    } else {
+      parts = rawLat.split(/\s+/).map(s => s.trim()).filter(Boolean);
+    }
+    if (parts.length >= 2) {
+      rawLat = parts[0];
+      rawLon = parts[1];
+    }
+  }
+
+  if (rawLat === null || rawLat === undefined || rawLon === null || rawLon === undefined) {
+    return { latitude: null, longitude: null, isValid: false, error: 'Missing coordinates' };
+  }
+
+  function parseComponent(val, isLatitude) {
+    if (typeof val === 'number') return val;
+    if (typeof val !== 'string') return NaN;
+    const clean = val.trim().toUpperCase();
+    let sign = 1;
+    if (isLatitude && (clean.endsWith('S') || clean.startsWith('S'))) sign = -1;
+    if (!isLatitude && (clean.endsWith('W') || clean.startsWith('W'))) sign = -1;
+    const numPart = clean.replace(/[^\d.-]/g, '');
+    const num = parseFloat(numPart);
+    return isNaN(num) ? NaN : num * sign;
+  }
+
+  const lat = parseComponent(rawLat, true);
+  const lon = parseComponent(rawLon, false);
+
+  if (isNaN(lat) || isNaN(lon)) {
+    return { latitude: null, longitude: null, isValid: false, error: 'Non-numeric coordinate value' };
+  }
+
+  if (lat < -90 || lat > 90) {
+    return { latitude: lat, longitude: lon, isValid: false, error: `Latitude out of range [-90, 90]: ${lat}` };
+  }
+
+  if (lon < -180 || lon > 180) {
+    return { latitude: lat, longitude: lon, isValid: false, error: `Longitude out of range [-180, 180]: ${lon}` };
+  }
+
+  return {
+    latitude: Math.round(lat * 1e7) / 1e7,
+    longitude: Math.round(lon * 1e7) / 1e7,
+    isValid: true
+  };
+}
+
+/**
+ * Classifies distance into standard tolerance bands:
+ * - Band 1: 0 - 500 m (Immediate Vicinity / High Proximity)
+ * - Band 2: 500 m - 2 km (Extended Neighborhood / Moderate Proximity)
+ * - Band 3: 2 km+ (Out of Proximity / Distant Area)
+ */
+function classifyDistanceBand(distanceMeters) {
+  if (distanceMeters === null || distanceMeters === undefined || isNaN(parseFloat(distanceMeters))) {
+    return {
+      band: 'NO_GPS',
+      minMeters: null,
+      maxMeters: null,
+      label: 'No GPS Reference',
+      badgeClass: 'badge-secondary',
+      tolerance: 'UNKNOWN'
+    };
+  }
+
+  const d = Math.max(0, parseFloat(distanceMeters));
+  if (d <= 500) {
+    return {
+      band: '0-500m',
+      minMeters: 0,
+      maxMeters: 500,
+      label: '0 - 500 m (Immediate Vicinity)',
+      badgeClass: 'badge-success',
+      tolerance: 'PROXIMITY_VERIFIED'
+    };
+  } else if (d <= 2000) {
+    return {
+      band: '500m-2km',
+      minMeters: 500,
+      maxMeters: 2000,
+      label: '500 m - 2 km (Extended Neighborhood)',
+      badgeClass: 'badge-warning',
+      tolerance: 'MODERATE_PROXIMITY'
+    };
+  } else {
+    return {
+      band: '2km+',
+      minMeters: 2000,
+      maxMeters: Infinity,
+      label: '2 km+ (Out of Proximity)',
+      badgeClass: 'badge-danger',
+      tolerance: 'OUT_OF_PROXIMITY'
+    };
+  }
+}
+
+/**
  * Haversine formula to calculate great-circle distance between two points in meters.
  */
 function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
@@ -20,20 +145,22 @@ function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
     return null;
   }
 
-  const nLat1 = parseFloat(lat1);
-  const nLon1 = parseFloat(lon1);
-  const nLat2 = parseFloat(lat2);
-  const nLon2 = parseFloat(lon2);
+  const p1 = parseCoordinates(lat1, lon1);
+  const p2 = parseCoordinates(lat2, lon2);
 
-  if (isNaN(nLat1) || isNaN(nLon1) || isNaN(nLat2) || isNaN(nLon2)) {
+  if (!p1.isValid || !p2.isValid) {
     return null;
   }
 
+  if (p1.latitude === p2.latitude && p1.longitude === p2.longitude) {
+    return 0;
+  }
+
   const R = 6371e3; // Earth radius in metres
-  const phi1 = (nLat1 * Math.PI) / 180;
-  const phi2 = (nLat2 * Math.PI) / 180;
-  const deltaPhi = ((nLat2 - nLat1) * Math.PI) / 180;
-  const deltaLambda = ((nLon2 - nLon1) * Math.PI) / 180;
+  const phi1 = (p1.latitude * Math.PI) / 180;
+  const phi2 = (p2.latitude * Math.PI) / 180;
+  const deltaPhi = ((p2.latitude - p1.latitude) * Math.PI) / 180;
+  const deltaLambda = ((p2.longitude - p1.longitude) * Math.PI) / 180;
 
   const a =
     Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
@@ -46,9 +173,7 @@ function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
 }
 
 /**
- * Format distance user-friendly:
-/**
- * Format distance strictly in meters:
+ * Format distance user-friendly strictly in meters:
  * - Always shows exact meters: e.g. '85 m', '207 m'
  */
 function formatDistance(distanceMeters) {
@@ -80,12 +205,15 @@ function classifyDistance(
       category: 'NO GPS REFERENCE',
       badgeClass: 'badge-secondary',
       label: 'No GPS Reference',
-      isPass: false
+      isPass: false,
+      distanceBand: 'NO_GPS',
+      bandDetails: classifyDistanceBand(null)
     };
   }
 
   const dist = parseFloat(distanceMeters);
   const isPrecise = (referenceQuality === 'PRECISE');
+  const bandInfo = classifyDistanceBand(dist);
 
   // Requirement 9: Apply the 100-meter PASS rule ONLY when the HR reference is sufficiently precise.
   if (!isPrecise) {
@@ -93,7 +221,9 @@ function classifyDistance(
       category: 'HR LOCATION APPROXIMATE - REVIEW REQUIRED',
       badgeClass: 'badge-warning',
       label: `${Math.round(dist)} m (HR LOCATION APPROXIMATE - REVIEW REQUIRED)`,
-      isPass: false
+      isPass: false,
+      distanceBand: bandInfo.band,
+      bandDetails: bandInfo
     };
   }
 
@@ -102,14 +232,18 @@ function classifyDistance(
       category: 'INSIDE RADIUS / PASS',
       badgeClass: 'badge-success',
       label: `${Math.round(dist)} m (INSIDE RADIUS / PASS)`,
-      isPass: true
+      isPass: true,
+      distanceBand: bandInfo.band,
+      bandDetails: bandInfo
     };
   } else {
     return {
       category: 'OUTSIDE RADIUS / REVIEW REQUIRED',
       badgeClass: 'badge-warning',
       label: `${Math.round(dist)} m (OUTSIDE RADIUS / REVIEW REQUIRED)`,
-      isPass: false
+      isPass: false,
+      distanceBand: bandInfo.band,
+      bandDetails: bandInfo
     };
   }
 }
@@ -164,8 +298,10 @@ function fuzzyContains(sourceText, targetToken) {
  */
 function extractHouseNumber(str) {
   if (!str) return '';
-  const match = str.match(/\b(?:no\.?|door\s*no\.?|flat\s*no\.?|d\.?no\.?|plot\s*no\.?|house\s*no\.?)?\s*([0-9]+[A-Za-z]?[\/-]?[0-9]*[A-Za-z]?)\b/i);
-  return match ? match[1].toUpperCase() : '';
+  const match = str.match(/(?:d\.?\s*no\.?|door\s*no\.?|flat\s*no\.?|plot\s*no\.?|house\s*no\.?|d\/o|no\.?|door|flat|plot|house)\s*#?\s*([A-Za-z0-9]+(?:[\/\-][A-Za-z0-9]+)*)/i);
+  if (match) return match[1].toUpperCase();
+  const fallback = str.match(/\b([0-9]+[A-Za-z]?[\/-]?[0-9]*[A-Za-z]?)\b/);
+  return fallback ? fallback[1].toUpperCase() : '';
 }
 
 /**
@@ -189,7 +325,7 @@ function extractPincode(addrObj) {
 function cleanDoorNumber(str) {
   if (!str) return '';
   return str
-    .replace(/^(no\.?|door\s*no\.?|flat\s*no\.?|plot\s*no\.?|d\.?no\.?|house\s*no\.?)?\s*[\d/A-Za-z-]+\s*[,\s]+/i, '')
+    .replace(/^(no\.?|door(?:\s*no)?\.?|flat(?:\s*no)?\.?|plot(?:\s*no)?\.?|d\.?no\.?|house(?:\s*no)?\.?)?\s*[\d/A-Za-z-]+\s*[,\s]+/i, '')
     .replace(/[#&]/g, ' ')
     .trim();
 }
@@ -273,7 +409,7 @@ function buildFullAddressString(addrObj) {
   }
 
   // Append 6-digit Pincode if not already present
-  const pin = pincode || (cleanRaw.match(/\b([1-9][0-9]{5})\b/) ? cleanRaw.match(/\b([1-9][0-9]{5})\b/)[1] : '');
+  const pin = String(pincode || (cleanRaw.match(/\b([1-9][0-9]{5})\b/) ? cleanRaw.match(/\b([1-9][0-9]{5})\b/)[1] : '')).trim();
   if (pin && !cleanRaw.includes(pin)) {
     parts.push(pin);
   }
@@ -1065,6 +1201,8 @@ module.exports = {
   formatDistance,
   getDynamicToleranceMeters,
   classifyDistance,
+  classifyDistanceBand,
+  parseCoordinates,
   normalizeAddress,
   buildFullAddressString,
   cleanDoorNumber,

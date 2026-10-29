@@ -32,7 +32,16 @@ async function request(url, options = {}) {
     }
 
     if (!res.ok) {
-      const errorMsg = data && data.error ? data.error : (typeof data === 'string' ? data : 'An error occurred.');
+      let errorMsg = 'An unexpected server error occurred.';
+      if (data && typeof data === 'object' && data.error) {
+        errorMsg = data.error;
+      } else if (typeof data === 'string' && data.trim()) {
+        errorMsg = data.trim();
+      } else if (res.status === 500 || res.status === 502 || res.status === 504) {
+        errorMsg = 'Cannot reach backend server. Please ensure the backend is running on port 5000.';
+      } else {
+        errorMsg = `Server error (${res.status}).`;
+      }
       const err = new Error(errorMsg);
       err.status = res.status;
       err.data = data;

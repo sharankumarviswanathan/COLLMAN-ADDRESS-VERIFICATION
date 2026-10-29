@@ -336,5 +336,9 @@ async function generateGoogleAuditMap(...args) {
 }
 
 module.exports = {
+  lon2tile,
+  lat2tile,
+  latLngToWorldPixel,
+  makePng,
   generateGoogleAuditMap
 };

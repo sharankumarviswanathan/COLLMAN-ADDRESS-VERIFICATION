@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { query } = require('../db/database');
 
-const downloadsDir = path.join(__dirname, '..', 'downloads');
+const downloadsDir = process.env.TEST_DOWNLOADS_DIR || path.join(__dirname, '..', 'downloads');
 if (!fs.existsSync(downloadsDir)) {
   fs.mkdirSync(downloadsDir, { recursive: true });
 }

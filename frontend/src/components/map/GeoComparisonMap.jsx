@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import L from 'leaflet';
 import { Crosshair, ExternalLink, MapPin, ShieldCheck, AlertTriangle } from 'lucide-react';
 
@@ -49,16 +49,21 @@ export function GeoComparisonMap({
     return `${Math.round(distNumber)} m`;
   }, [distNumber]);
 
-  // Fixed 100-meter verification rule
+  // Fixed 100-meter verification rule: PASS ONLY when reference is PRECISE and distance <= 100m
+  const isApproximateReference = useMemo(() => {
+    return typeof distanceCategory === 'string' && distanceCategory.toUpperCase().includes('APPROXIMATE');
+  }, [distanceCategory]);
+
   const isInsideRadius = useMemo(() => {
-    if (distNumber === null) return false;
+    if (distNumber === null || isApproximateReference) return false;
     return distNumber <= 100;
-  }, [distNumber]);
+  }, [distNumber, isApproximateReference]);
 
   const radiusStatusText = useMemo(() => {
     if (distNumber === null) return distanceCategory || 'Calculated';
+    if (isApproximateReference) return 'HR LOCATION APPROXIMATE - REVIEW REQUIRED';
     return isInsideRadius ? 'INSIDE RADIUS / PASS' : 'OUTSIDE RADIUS / REVIEW REQUIRED';
-  }, [distNumber, isInsideRadius, distanceCategory]);
+  }, [distNumber, isInsideRadius, isApproximateReference, distanceCategory]);
 
   useEffect(() => {
     if (!mapContainerRef.current || !hasCoords) return;

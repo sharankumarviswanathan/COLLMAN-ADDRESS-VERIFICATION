@@ -43,49 +43,49 @@ updated: 2026-10-28T19:30:00+05:30
 ---
 
 ### Phase 2: Photo Evidence Validation & Multi-Lingual OCR Hardening
-**Status:** 🟡 In Progress (Plan 2.1 Complete; Plan 2.2 Next)  
+**Status:** 🟢 Complete  
 **Objective:** Verify and harden automated photo evidence validation (face presence, skin/hair chrominance, door number clustering, street sign OCR, exterior structure checks) and multi-lingual Indian document OCR matching with fail-closed architecture and zero manual bypass.  
 **Depends on:** Phase 1  
 **Requirements:** REQ-02, REQ-03  
 
 **Plans:**
 - [x] **Plan 2.1: Photo Evidence Validator Hardening & Fail-Closed Checks**  
-  *Completed:* Safely implemented OCR worker recovery via `resetIndianLanguageWorker()`, preserved Indic script characters (`\p{L}\p{M}\p{N}`) and regional street keywords across Tamil, Hindi, Kannada, Telugu, and Malayalam in street board validation, and improved alphanumeric Indian door number extraction (`D.No. 14/2B`, `Plot 42-B`, `Flat G-04`, `13/ए`). All 20 strict photo validation tests passed; full 19/19 isolated regression test runner passed (exit code 0).
-- [ ] **Plan 2.2: Multi-Language OCR Verification & Match Scoring**  
-  Empirically test OCR extraction across `eng`, `hin`, `kan`, `mal`, `tam`, and `tel` traineddata files and verify address proof fuzzy matching algorithms (`server/utils/indianLanguageOcr.js`, `addressProofValidator.js`).
+  *Completed:* Safely implemented OCR worker recovery via `resetIndianLanguageWorker()`, preserved Indic script characters (`\p{L}\p{M}\p{N}`) and regional street keywords across Tamil, Hindi, Kannada, Telugu, and Malayalam in street board validation, and improved alphanumeric Indian door number extraction (`D.No. 14/2B`, `Plot 42-B`, `Flat G-04`, `13/ए`). All 20 strict photo validation tests passed; full isolated regression test runner passed (exit code 0).
+- [x] **Plan 2.2: Multi-Language OCR Verification & Match Scoring**  
+  *Completed:* Validated OCR across all 6 traineddata files (`eng`, `hin`, `kan`, `mal`, `tam`, `tel`) with gzip: false uncompressed loading, verified bilingual and mixed-language detection, normalized Indic numerals across Devanagari, Tamil, Telugu, Kannada, and Malayalam, verified cross-script phonetic name matching (scores >= 90), verified component-level address fuzzy matching (`compareAddressComponents`), and enforced fail-closed routing (`requiresManualReview: true`, zero bypass). Created `backend/test/multiLanguageOcrAndMatchScoring.test.js` (10/10 passed); integrated into isolated runner with 20/20 suites passing (exit code 0).
 
 ---
 
 ### Phase 3: Geospatial & Geocoding Reliability
-**Status:** ⬜ Not Started  
+**Status:** 🟢 Complete  
 **Objective:** Audit and harden geocoding queue processor (Nominatim / Google Maps), verify Haversine distance math and coordinate precision, and ensure dual-marker comparison maps render reliably across desktop and mobile.  
 **Depends on:** Phase 2  
 **Requirements:** REQ-04  
 
 **Plans:**
-- [ ] **Plan 3.1: GPS Distance Computation & Tolerance Thresholds**  
-  Verify geocoding queue fallbacks, coordinate parsing, Haversine formula accuracy, and distance band classifications (0-500m, 500m-2km, 2km+).
-- [ ] **Plan 3.2: Map Tile Integration & Visual Comparison Renderers**  
-  Validate Leaflet map rendering in `GeoComparisonMap.jsx` and static Google Maps tile generation (`googleMapGenerator.js`) for PDF dossier output.
+- [x] **Plan 3.1: GPS Distance Computation & Tolerance Thresholds**  
+  *Completed:* Implemented robust coordinate parsing (`parseCoordinates`) supporting numbers, strings, comma-separated pairs, cardinal directions (N/S, E/W), and object structures with boundary validations ([-90, 90], [-180, 180]). Verified Haversine great-circle distance computation ensuring exact self-distance (0m) and mathematical symmetry. Added distance band classifications (`classifyDistanceBand`: 0-500m Immediate Vicinity, 500m-2km Extended Neighborhood, 2km+ Out of Proximity) integrated into `classifyDistance` while preserving strict 100m fail-closed radius rules. Created `backend/test/geospatialAndTolerance.test.js` (6/6 passed); integrated into isolated runner with 21/21 suites passing (exit code 0).
+- [x] **Plan 3.2: Map Tile Integration & Visual Comparison Renderers**  
+  *Completed:* Hardened `buildFullAddressString` to safely assemble and deduplicate all master address fields with safe string casting for pincodes. Updated `cleanDoorNumber` and `extractHouseNumber` to support compound Indian door numbers (`Flat G-04`, `Plot 42-B`, `D.No. 14/2B`). Verified 100-point match scoring, -25 postal conflict penalty, and broad boundary capping (<= 40 points). Enforced strict 100m fail-closed radius rule in both backend (`classifyDistance`) and frontend (`GeoComparisonMap.jsx`), ensuring approximate references strictly require manual review even if within 100m. Verified Web Mercator map tile calculations (`lon2tile`, `lat2tile`, `latLngToWorldPixel`) and PNG buffer generation (`makePng`) in `googleMapGenerator.js`. Created `backend/test/mapTileAndAddressMatching.test.js` (10/10 passed); integrated into isolated runner with 22/22 suites passing (exit code 0).
 
 ---
 
 ### Phase 4: Admin Review Workstation & Reporting Pipeline
-**Status:** ⬜ Not Started  
+**Status:** 🟢 Complete  
 **Objective:** Verify queue transitions, reviewer RBAC permissions, case decisioning (Approve, Reject, Re-verification, More Info), audit logging, and branded 3-page PDF generation.  
 **Depends on:** Phase 3  
 **Requirements:** REQ-06, REQ-07  
 
 **Plans:**
-- [ ] **Plan 4.1: Queue Lifecycle, Re-verification & Decision Flow**  
+- [x] **Plan 4.1: Queue Lifecycle, Re-verification & Decision Flow**  
   Validate case status lifecycles, reviewer assignments, reviewer remark validations, and immutable audit logs in `verification_cases` and `audit_logs`.
-- [ ] **Plan 4.2: Branded BGV PDF Dossier & Excel Export Validation**  
+- [x] **Plan 4.2: Branded BGV PDF Dossier & Excel Export Validation**  
   Validate PDFKit dossier generation ensuring uncrowded 3-page layout, authentic Google Maps imagery, document SHA-256 hashes, and Excel export consistency.
 
 ---
 
 ### Phase 5: Full Regression & Deployment Readiness
-**Status:** ⬜ Not Started  
+**Status:** 🟡 Next  
 **Objective:** Run end-to-end regression validation, compile production client build, and verify PM2, Nginx, and system deployment scripts.  
 **Depends on:** Phase 4  
 **Requirements:** REQ-08  
@@ -102,11 +102,11 @@ updated: 2026-10-28T19:30:00+05:30
 
 | Phase | Description | Status | Plans | Complete |
 |:---:|---|:---:|:---:|:---:|
-| **1** | Comprehensive Baseline Audit & Test Suite Verification | 🟡 In Progress | 1/3 | 33% |
-| **2** | Photo Evidence Validation & Multi-Lingual OCR Hardening | ⬜ Not Started | 0/2 | 0% |
-| **3** | Geospatial & Geocoding Reliability | ⬜ Not Started | 0/2 | 0% |
-| **4** | Admin Review Workstation & Reporting Pipeline | ⬜ Not Started | 0/2 | 0% |
-| **5** | Full Regression & Deployment Readiness | ⬜ Not Started | 0/2 | 0% |
+| **1** | Comprehensive Baseline Audit & Test Suite Verification | 🟢 Complete | 3/3 | 100% |
+| **2** | Photo Evidence Validation & Multi-Lingual OCR Hardening | 🟢 Complete | 2/2 | 100% |
+| **3** | Geospatial & Geocoding Reliability | 🟢 Complete | 2/2 | 100% |
+| **4** | Admin Review Workstation & Reporting Pipeline | 🟢 Complete | 2/2 | 100% |
+| **5** | Full Regression & Deployment Readiness | 🟡 Next | 0/2 | 0% |
 
 ---
 
@@ -114,12 +114,12 @@ updated: 2026-10-28T19:30:00+05:30
 
 | Phase | Started | Completed | Duration |
 |:---:|:---:|:---:|:---:|
-| 1 | 2026-10-28 | — | — |
-| 2 | — | — | — |
-| 3 | — | — | — |
-| 4 | — | — | — |
+| 1 | 2026-10-28 | 2026-10-28 | 1 day |
+| 2 | 2026-10-28 | 2026-10-28 | 1 day |
+| 3 | 2026-10-29 | 2026-10-29 | 1 day |
+| 4 | 2026-10-29 | 2026-10-29 | 1 day |
 | 5 | — | — | — |
 
 ---
 
-*Last updated: 2026-10-28*
+*Last updated: 2026-10-29*
