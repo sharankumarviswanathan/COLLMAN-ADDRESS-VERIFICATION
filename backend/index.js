@@ -80,29 +80,51 @@ app.use((err, req, res, next) => {
 
 const os = require('os');
 
-function getLocalIpAddress() {
+function getNetworkIpAddresses() {
   const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
+  const list = [];
+  for (const [name, ifaces] of Object.entries(interfaces)) {
+    for (const iface of ifaces || []) {
       if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address;
+        if (iface.address.startsWith('169.254.')) continue; // ignore APIPA
+        const isVirtual = /vEthernet|Virtual|WSL|VMware|Loopback/i.test(name);
+        list.push({ name, address: iface.address, isVirtual });
       }
     }
   }
-  return 'localhost';
+  // Sort so physical LAN (192.168.x.x, 10.x.x.x) comes before virtual adapters
+  list.sort((a, b) => {
+    if (a.isVirtual !== b.isVirtual) return a.isVirtual ? 1 : -1;
+    if (a.address.startsWith('192.168.') && !b.address.startsWith('192.168.')) return -1;
+    if (!a.address.startsWith('192.168.') && b.address.startsWith('192.168.')) return 1;
+    return 0;
+  });
+  return list;
+}
+
+function getLocalIpAddress() {
+  const ips = getNetworkIpAddresses();
+  return ips.length > 0 ? ips[0].address : 'localhost';
 }
 
 async function startServer() {
   try {
     await initDatabase();
     app.listen(PORT, '0.0.0.0', () => {
-      const localIp = getLocalIpAddress();
+      const primaryIp = getLocalIpAddress();
+      const allIps = getNetworkIpAddresses();
       console.log(`=======================================================`);
       console.log(` COLLMAN SERVICES ADDRESS VERIFICATION BACKEND STARTED `);
-      console.log(` Local:        http://localhost:${PORT}`);
-      console.log(` Network (LAN): http://${localIp}:${PORT}`);
-      console.log(` Common Link:  http://${localIp}:${PORT}/verify`);
-      console.log(` HR / Admin:   http://${localIp}:${PORT}/admin`);
+      console.log(` Local:         http://localhost:${PORT}`);
+      console.log(` Primary IP:    http://${primaryIp}:${PORT}`);
+      allIps.forEach(item => {
+        if (item.address !== primaryIp) {
+          console.log(` Alt IP (${item.name}): http://${item.address}:${PORT}`);
+        }
+      });
+      console.log(` Employee Link: http://${primaryIp}:${PORT}/verify`);
+      console.log(` HR / Admin:    http://${primaryIp}:${PORT}/admin`);
+      console.log(` Mode:          ANY IP ADDRESS (0.0.0.0)`);
       console.log(`=======================================================`);
     });
   } catch (err) {

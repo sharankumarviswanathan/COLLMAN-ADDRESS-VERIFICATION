@@ -98,18 +98,28 @@ REM 6. Launch Frontend
 echo [INFO] Launching Frontend Vite Dev Server on http://localhost:3000 ...
 start "Collman Frontend (Port 3000)" cmd /k "title Collman Frontend && cd /d ""%~dp0"" && npm run dev:frontend"
 
-REM 7. Wait and Open Browser
+REM 7. Resolve Local Network IP Address
+set "HOST_IP=localhost"
+for /f "tokens=*" %%i in ('node -e "const os=require('os');const ifs=os.networkInterfaces();let ip='localhost';for(const[n,list] of Object.entries(ifs)){for(const f of list){if(f.family==='IPv4'&&!f.internal&&!f.address.startsWith('169.254.')&&!/vEthernet|Virtual|WSL|VMware/i.test(n)){ip=f.address;break;}}}console.log(ip);"') do set "HOST_IP=%%i"
+
+REM 8. Wait and Open Browser
 timeout /t 3 >nul 2>&1
 echo [INFO] Opening HR / Admin Portal in default browser...
 start http://localhost:3000/admin/login
 
 echo.
 echo ==============================================================================
-echo  Both servers started successfully!
+echo  Both servers started successfully in ANY IP / LAN Mode!
+echo ==============================================================================
+echo  [LOCAL ACCESS - This Computer]
+echo   - HR / Admin Login:  http://localhost:3000/admin/login
+echo   - Candidate Link:    http://localhost:3000/verify
+echo   - Backend API:       http://localhost:5000/api/health
 echo.
-echo  - HR / Admin Login:  http://localhost:3000/admin/login
-echo  - Candidate Link:    http://localhost:3000/verify
-echo  - Backend API:       http://localhost:5000/api/health
+echo  [NETWORK ACCESS - Any IP / Phone / Other Computers]
+echo   - HR / Admin Login:  http://%HOST_IP%:3000/admin/login
+echo   - Candidate Link:    http://%HOST_IP%:3000/verify
+echo   - Backend API:       http://%HOST_IP%:5000/api/health
 echo.
 echo  Default Login:
 echo    Username: admin@collman.com  ^|  Password: admin123
@@ -138,6 +148,9 @@ if not exist "backend\db\collman_bgv.db" (
     call npm run seed
 )
 
+set "HOST_IP=localhost"
+for /f "tokens=*" %%i in ('node -e "const os=require('os');const ifs=os.networkInterfaces();let ip='localhost';for(const[n,list] of Object.entries(ifs)){for(const f of list){if(f.family==='IPv4'&&!f.internal&&!f.address.startsWith('169.254.')&&!/vEthernet|Virtual|WSL|VMware/i.test(n)){ip=f.address;break;}}}console.log(ip);"') do set "HOST_IP=%%i"
+
 echo [INFO] Starting Production Server on Port 5000 (Serving API + Frontend)...
 start "Collman Production Server" cmd /k "title Collman Production Server && cd /d ""%~dp0"" && set NODE_ENV=production && node backend/index.js"
 
@@ -145,7 +158,13 @@ timeout /t 3 >nul 2>&1
 start http://localhost:5000/admin/login
 
 echo.
-echo Production server started at http://localhost:5000
+echo ==============================================================================
+echo  Production Server started successfully in ANY IP Mode!
+echo  - Local:   http://localhost:5000
+echo  - Network: http://%HOST_IP%:5000
+echo  - Admin:   http://%HOST_IP%:5000/admin/login
+echo  - Verify:  http://%HOST_IP%:5000/verify
+echo ==============================================================================
 pause
 goto MENU
 
