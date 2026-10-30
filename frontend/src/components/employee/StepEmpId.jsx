@@ -283,11 +283,11 @@ export function StepEmpId() {
           gap: '6px',
           fontSize: '0.8rem',
           fontWeight: 700,
-          color: stage === 'TL' ? '#991B1B' : '#059669',
-          backgroundColor: stage === 'TL' ? '#FDF2F2' : '#ECFDF5',
+          color: stage === 'TL' ? 'var(--emp-subtitle-color)' : '#059669',
+          backgroundColor: stage === 'TL' ? 'var(--emp-pill-bg)' : '#ECFDF5',
           padding: '4px 10px',
           borderRadius: '999px',
-          border: `1px solid ${stage === 'TL' ? '#FECACA' : '#A7F3D0'}`
+          border: `1px solid ${stage === 'TL' ? 'var(--emp-pill-border)' : '#A7F3D0'}`
         }}>
           {stage === 'TL' ? <KeyRound size={13} /> : <CheckCircle2 size={13} />}
           <span>1. TL ID</span>
@@ -299,11 +299,11 @@ export function StepEmpId() {
           gap: '6px',
           fontSize: '0.8rem',
           fontWeight: 700,
-          color: stage === 'AGENT' ? '#991B1B' : '#94A3B8',
-          backgroundColor: stage === 'AGENT' ? '#FDF2F2' : '#F1F5F9',
+          color: stage === 'AGENT' ? 'var(--emp-subtitle-color)' : '#94A3B8',
+          backgroundColor: stage === 'AGENT' ? 'var(--emp-pill-bg)' : '#F1F5F9',
           padding: '4px 10px',
           borderRadius: '999px',
-          border: `1px solid ${stage === 'AGENT' ? '#FECACA' : '#E2E8F0'}`
+          border: `1px solid ${stage === 'AGENT' ? 'var(--emp-pill-border)' : '#E2E8F0'}`
         }}>
           <UserCheck size={13} />
           <span>2. Agent ID</span>
@@ -316,17 +316,18 @@ export function StepEmpId() {
           width: 58,
           height: 58,
           borderRadius: '50%',
-          backgroundColor: stage === 'TL' ? '#FDF2F2' : '#F0FDF4',
-          color: stage === 'TL' ? '#991B1B' : '#16A34A',
+          backgroundColor: stage === 'TL' ? 'var(--emp-icon-bg)' : '#F0FDF4',
+          color: stage === 'TL' ? 'var(--emp-icon-color)' : '#16A34A',
+          border: `1.5px solid ${stage === 'TL' ? 'var(--emp-icon-border)' : '#BBF7D0'}`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           margin: '0 auto 14px auto',
-          boxShadow: '0 4px 12px rgba(153, 27, 27, 0.12)'
+          boxShadow: stage === 'TL' ? '0 4px 14px var(--emp-btn-glow)' : '0 4px 12px rgba(22, 163, 74, 0.15)'
         }}>
           {stage === 'TL' ? <ShieldCheck size={30} /> : <UserCheck size={30} />}
         </div>
-        <h2 className="emp-step-title" style={{ color: '#4A0404', fontWeight: 800 }}>
+        <h2 className="emp-step-title" style={{ color: 'var(--emp-title-color)', fontWeight: 800 }}>
           {stage === 'TL' ? 'Enter TL Employee ID' : 'Enter Agent Employee ID'}
         </h2>
         <p className="emp-step-instruction" style={{ color: '#475569', fontSize: '0.92rem' }}>

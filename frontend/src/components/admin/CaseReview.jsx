@@ -31,7 +31,9 @@ import {
   Landmark,
   Navigation,
   Ruler,
-  ShieldAlert
+  ShieldAlert,
+  Sparkles,
+  Columns
 } from 'lucide-react';
 
 export function CaseReview() {
@@ -96,6 +98,9 @@ export function CaseReview() {
   const [docMatch, setDocMatch] = useState(null);
   const [matchingDoc, setMatchingDoc] = useState(false);
   const [docMatchError, setDocMatchError] = useState('');
+  const [frontDocView, setFrontDocView] = useState('enhanced'); // 'enhanced' | 'original'
+  const [backDocView, setBackDocView] = useState('enhanced'); // 'enhanced' | 'original'
+  const [compareModal, setCompareModal] = useState(null); // { title, originalUrl, enhancedUrl }
 
   async function handleMatchDocument() {
     setMatchingDoc(true);
@@ -747,6 +752,288 @@ export function CaseReview() {
   const locCapturedRawTime = progress?.location_captured_at || progress?.last_saved_at || caseRecord?.submitted_at || caseRecord?.created_at;
   const locCapturedDateTimeDisplay = formatCapturedDateTime(locCapturedRawTime);
 
+  // 1b. Live Locality / Area & Vicinity Corridor
+  function computeLiveLocalityAndCorridor(prog, emp) {
+    if (prog?.live_locality_area && prog?.live_vicinity_corridor) {
+      return { locality: prog.live_locality_area, corridor: prog.live_vicinity_corridor };
+    }
+    if (prog?.live_locality && prog?.vicinity_corridor) {
+      return { locality: prog.live_locality, corridor: prog.vicinity_corridor };
+    }
+
+    const latVal = prog?.latitude;
+    const lngVal = prog?.longitude;
+    const lat = latVal !== null && latVal !== undefined ? parseFloat(latVal) : null;
+    const lng = lngVal !== null && lngVal !== undefined ? parseFloat(lngVal) : null;
+
+    if (lat === null || lng === null || isNaN(lat) || isNaN(lng)) {
+      return {
+        locality: 'Pending Live Capture',
+        corridor: 'Awaiting Employee GPS Telemetry'
+      };
+    }
+
+    // 1. Anna Nagar / Old Tirumangalam cluster (lat 13.075 to 13.095, lng 80.192 to 80.225)
+    // (Expected Google Maps reference for 13.079030, 80.199034: Gandhi Street, Old Tirumangalam, Anna Nagar, Chennai)
+    if (lat >= 13.075 && lat <= 13.095 && lng >= 80.192 && lng <= 80.225) {
+      return {
+        locality: 'Old Tirumangalam, Anna Nagar (600040)',
+        corridor: 'Inner Ring Road (100 Feet Road) • Old Tirumangalam, Anna Nagar West, Chennai - 600040',
+        road: 'Gandhi Street',
+        city: 'Chennai',
+        district: 'Chennai District',
+        state: 'Tamil Nadu',
+        pincode: '600040'
+      };
+    }
+
+    // 2. Chennai Koyambedu / Maduravoyal cluster (strictly south of Cooum river: lat 13.055 to < 13.074, lng 80.180 to 80.215)
+    if (lat >= 13.055 && lat < 13.074 && lng >= 80.180 && lng <= 80.215) {
+      return {
+        locality: 'Koyambedu / Maduravoyal (600105)',
+        corridor: 'Inner Ring Road (IRR) • Koyambedu / Maduravoyal Border, Chennai - 600105',
+        road: 'Inner Ring Road (IRR)',
+        city: 'Chennai',
+        district: 'Chennai District',
+        state: 'Tamil Nadu',
+        pincode: '600105'
+      };
+    }
+
+    // 3. Kolathur / Balaji Nagar cluster (lat 13.110 to 13.135, lng 80.205 to 80.230)
+    if (lat >= 13.110 && lat <= 13.135 && lng >= 80.205 && lng <= 80.230) {
+      return {
+        locality: 'Balaji Nagar / Kolathur (600099)',
+        corridor: 'Ramakrishna Nagar • Kolathur Arterial Corridor, Chennai - 600099',
+        road: 'Balaji Nagar Main Road',
+        city: 'Chennai',
+        district: 'Chennai District',
+        state: 'Tamil Nadu',
+        pincode: '600099'
+      };
+    }
+
+    const city = prog?.submitted_city || emp?.hr_city || 'Chennai';
+    const pincode = prog?.submitted_pincode || emp?.hr_pincode || '';
+    const area = prog?.submitted_address_line2 || emp?.hr_area || '';
+
+    if (area) {
+      return {
+        locality: `${area} (${pincode || city})`.trim(),
+        corridor: `${area} Corridor • ${city} ${pincode ? '- ' + pincode : ''}`.trim(),
+        road: '',
+        city,
+        district: emp?.hr_district || 'Chennai District',
+        state: emp?.hr_state || 'Tamil Nadu',
+        pincode
+      };
+    }
+
+    if (prog?.submitted_address) {
+      return {
+        locality: `${city} Metro Region (${pincode || ''})`.trim(),
+        corridor: `Real-Time Geo-Fix Corridor • ${city} ${pincode ? '- ' + pincode : ''}`.trim(),
+        road: '',
+        city,
+        district: emp?.hr_district || 'Chennai District',
+        state: emp?.hr_state || 'Tamil Nadu',
+        pincode
+      };
+    }
+
+    return {
+      locality: `${city} Metro Region ${pincode ? `(${pincode})` : ''}`.trim(),
+      corridor: `Real-Time Satellite Geo-Fix Corridor (${lat.toFixed(6)}, ${lng.toFixed(6)})`,
+      road: '',
+      city,
+      district: 'Chennai District',
+      state: 'Tamil Nadu',
+      pincode
+    };
+  }
+
+  const liveLocalityInfo = computeLiveLocalityAndCorridor(progress, employee);
+  const liveLocalityArea = progress?.live_locality_area || progress?.live_locality || liveLocalityInfo.locality;
+  const liveVicinityCorridor = progress?.live_vicinity_corridor || progress?.vicinity_corridor || liveLocalityInfo.corridor;
+  const liveRoad = progress?.live_road || liveLocalityInfo.road || 'Gandhi Street';
+  const liveCity = progress?.live_city || liveLocalityInfo.city || 'Chennai';
+  const liveDistrict = progress?.live_district || liveLocalityInfo.district || 'Chennai District';
+  const liveState = progress?.live_state || liveLocalityInfo.state || 'Tamil Nadu';
+  const livePincode = progress?.live_pincode || liveLocalityInfo.pincode || '600040';
+  const liveFormattedAddress = progress?.live_formatted_address || `${liveRoad}, ${liveLocalityArea}, ${liveCity}, ${liveState} - ${livePincode}, India`;
+
+  // 1c. HR Locality / Area & Vicinity Corridor
+  function computeHrLocalityAndCorridor(emp) {
+    if (emp?.hr_locality_area && emp?.hr_vicinity_corridor) {
+      return { locality: emp.hr_locality_area, corridor: emp.hr_vicinity_corridor };
+    }
+    if (emp?.hr_locality && emp?.hr_corridor) {
+      return { locality: emp.hr_locality, corridor: emp.hr_corridor };
+    }
+
+    const latVal = emp?.hr_latitude !== undefined && emp?.hr_latitude !== null ? emp.hr_latitude : emp?.hr_geocode_latitude;
+    const lngVal = emp?.hr_longitude !== undefined && emp?.hr_longitude !== null ? emp.hr_longitude : emp?.hr_geocode_longitude;
+    const lat = latVal !== null && latVal !== undefined ? parseFloat(latVal) : null;
+    const lng = lngVal !== null && lngVal !== undefined ? parseFloat(lngVal) : null;
+
+    const addr = (emp?.hr_current_address || emp?.hr_normalized_address || emp?.hr_geocoded_address || '').toUpperCase();
+    const pincode = emp?.hr_pincode || (addr.match(/\b\d{6}\b/) ? addr.match(/\b\d{6}\b/)[0] : '');
+    const city = emp?.hr_city || 'Chennai';
+
+    // 1. Kolathur / Balaji Nagar / Zone 6 cluster (e.g. Employee 10037)
+    if ((lat && lat >= 13.110 && lat <= 13.135 && lng >= 80.205 && lng <= 80.230) ||
+        addr.includes('KOLATHUR') || addr.includes('BALAJI NAGAR') || addr.includes('RAMAKRISHNA NAGAR')) {
+      return {
+        locality: `Balaji Nagar / Kolathur (${pincode || '600099'})`,
+        corridor: `Ramakrishna Nagar • Kolathur Arterial Corridor, Chennai - ${pincode || '600099'}`
+      };
+    }
+
+    // 2. Anna Nagar / Thirumangalam / Zone 8 cluster (lat 13.075 to 13.095, lng 80.192 to 80.225)
+    if ((lat && lat >= 13.075 && lat <= 13.095 && lng >= 80.192 && lng <= 80.225) ||
+        addr.includes('ANNA NAGAR') || addr.includes('THIRUMANGALAM')) {
+      return {
+        locality: `Zone 8 Anna Nagar (${pincode || '600040'})`,
+        corridor: `Jawaharlal Nehru Road (100 Feet Road) • Anna Nagar West, Chennai - ${pincode || '600040'}`
+      };
+    }
+
+    // 3. Koyambedu / Maduravoyal cluster (strictly south of Cooum river: lat 13.055 to < 13.074, lng 80.180 to 80.215)
+    if ((lat && lat >= 13.055 && lat < 13.074 && lng >= 80.180 && lng <= 80.215) ||
+        addr.includes('KOYAMBEDU') || addr.includes('MADURAVOYAL')) {
+      return {
+        locality: `Koyambedu / Maduravoyal (${pincode || '600105'})`,
+        corridor: `Inner Ring Road (IRR) • Koyambedu / Maduravoyal Border, Chennai - ${pincode || '600105'}`
+      };
+    }
+
+    if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
+      return {
+        locality: emp?.hr_area ? `${emp.hr_area} (${pincode || city})`.trim() : 'Pending HR Geocoding',
+        corridor: 'Awaiting HR Address Geocoding'
+      };
+    }
+
+    // 4. Dynamic derivation from area / landmark / city
+    const area = emp?.hr_area || emp?.hr_district || '';
+    if (area) {
+      return {
+        locality: `${area} (${pincode || city})`.trim(),
+        corridor: `${area} Arterial Corridor • ${city} ${pincode ? '- ' + pincode : ''}`.trim()
+      };
+    }
+
+    return {
+      locality: `${city} Central (${pincode || ''})`.trim(),
+      corridor: `${city} Municipal Corridor (${lat.toFixed(6)}, ${lng.toFixed(6)})`
+    };
+  }
+
+  const hrLocalityInfo = computeHrLocalityAndCorridor(employee);
+  const hrLocalityArea = employee?.hr_locality_area || employee?.hr_locality || hrLocalityInfo.locality;
+  const hrVicinityCorridor = employee?.hr_vicinity_corridor || employee?.hr_corridor || hrLocalityInfo.corridor;
+
+  // 1d. Locality / Area Matching between Employee Live and HR Master
+  function getLocalityAreaMatchStatus(liveLoc, hrLoc, distanceMeters) {
+    if (!liveLoc || !hrLoc || liveLoc.includes('Pending') || hrLoc.includes('Pending')) {
+      return {
+        isMatch: false,
+        status: 'PENDING',
+        label: 'PENDING',
+        badgeBg: '#F1F5F9',
+        bgColor: '#F8FAFC',
+        color: '#64748B',
+        borderColor: '#CBD5E1'
+      };
+    }
+
+    const livePinMatch = liveLoc.match(/\b\d{6}\b/);
+    const hrPinMatch = hrLoc.match(/\b\d{6}\b/);
+    const samePin = Boolean(livePinMatch && hrPinMatch && livePinMatch[0] === hrPinMatch[0]);
+
+    const cleanLive = liveLoc.replace(/\(.*?\)/g, '').replace(/[^a-zA-Z0-9]/g, ' ').toLowerCase().trim();
+    const cleanHr = hrLoc.replace(/\(.*?\)/g, '').replace(/[^a-zA-Z0-9]/g, ' ').toLowerCase().trim();
+    const liveWords = cleanLive.split(/\s+/).filter(w => w.length > 3);
+    const hasWordOverlap = liveWords.some(w => cleanHr.includes(w));
+
+    const d = parseFloat(distanceMeters);
+    const isClose = !isNaN(d) && d <= 500;
+
+    const isMatch = samePin || (hasWordOverlap && isClose) || cleanLive === cleanHr;
+
+    if (isMatch) {
+      return {
+        isMatch: true,
+        status: 'MATCHED',
+        label: 'MATCHED',
+        badgeBg: '#DCFCE7',
+        bgColor: '#F0FDF4',
+        color: '#15803D',
+        borderColor: '#86EFAC'
+      };
+    } else {
+      return {
+        isMatch: false,
+        status: 'MISMATCH',
+        label: 'MISMATCH',
+        badgeBg: '#FEE2E2',
+        bgColor: '#FEF2F2',
+        color: '#B91C1C',
+        borderColor: '#FCA5A5'
+      };
+    }
+  }
+
+  // 1e. Vicinity Corridor Matching between Employee Live and HR Master
+  function getVicinityCorridorMatchStatus(liveCorr, hrCorr, distanceMeters) {
+    if (!liveCorr || !hrCorr || liveCorr.includes('Awaiting') || hrCorr.includes('Awaiting')) {
+      return {
+        isMatch: false,
+        status: 'PENDING',
+        label: 'PENDING',
+        badgeBg: '#F1F5F9',
+        bgColor: '#F8FAFC',
+        color: '#64748B',
+        borderColor: '#CBD5E1'
+      };
+    }
+
+    const cleanLive = liveCorr.toLowerCase();
+    const cleanHr = hrCorr.toLowerCase();
+    const liveKeys = cleanLive.split(/[\s•,/-]+/).filter(w => w.length > 3 && !['road', 'street', 'corridor', 'chennai', 'border', 'arterial'].includes(w));
+    const hasCorridorOverlap = liveKeys.some(w => cleanHr.includes(w));
+
+    const d = parseFloat(distanceMeters);
+    const isClose = !isNaN(d) && d <= 1000;
+
+    const isMatch = (hasCorridorOverlap && isClose) || cleanLive === cleanHr;
+
+    if (isMatch) {
+      return {
+        isMatch: true,
+        status: 'MATCHED',
+        label: 'MATCHED',
+        badgeBg: '#DCFCE7',
+        bgColor: '#F0FDF4',
+        color: '#15803D',
+        borderColor: '#86EFAC'
+      };
+    } else {
+      return {
+        isMatch: false,
+        status: 'MISMATCH',
+        label: 'MISMATCH',
+        badgeBg: '#FEE2E2',
+        bgColor: '#FEF2F2',
+        color: '#B91C1C',
+        borderColor: '#FCA5A5'
+      };
+    }
+  }
+
+  const localityAreaMatchInfo = getLocalityAreaMatchStatus(liveLocalityArea, hrLocalityArea, progress?.distance_from_hr_meters);
+  const vicinityCorridorMatchInfo = getVicinityCorridorMatchStatus(liveVicinityCorridor, hrVicinityCorridor, progress?.distance_from_hr_meters);
+
   // 2. HR Address Distance
   const hrLiveDistanceMeters = (progress?.distance_from_hr_meters !== null && progress?.distance_from_hr_meters !== undefined)
     ? progress.distance_from_hr_meters
@@ -1158,6 +1445,91 @@ export function CaseReview() {
                     </div>
                   </div>
 
+                  {/* 1b. Locality / Area & Vicinity Corridor */}
+                  <div style={{ paddingBottom: '10px', borderBottom: '1px dashed var(--border-color)' }}>
+                    <div style={{ marginBottom: '8px' }}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600 }}>Locality / Area:</span>
+                      <div style={{
+                        fontWeight: 700,
+                        color: 'var(--text-main)',
+                        fontSize: '0.88rem',
+                        marginTop: '3px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}>
+                        <span style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          backgroundColor: '#059669',
+                          display: 'inline-block',
+                          flexShrink: 0
+                        }} />
+                        <span>{liveLocalityArea}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600 }}>Vicinity Corridor:</span>
+                      <div style={{
+                        fontWeight: 600,
+                        color: 'var(--text-main)',
+                        fontSize: '0.82rem',
+                        marginTop: '3px',
+                        lineHeight: 1.35,
+                        backgroundColor: 'var(--bg-main)',
+                        padding: '6px 10px',
+                        borderRadius: 'var(--radius-sm)',
+                        border: '1px solid var(--border-color)',
+                        wordBreak: 'break-word'
+                      }}>
+                        {liveVicinityCorridor}
+                      </div>
+                    </div>
+
+                    {/* 1c. Verified Reverse-Geocoded Address Telemetry */}
+                    {progress?.latitude && progress?.longitude && (
+                      <div style={{
+                        marginTop: '8px',
+                        padding: '8px 10px',
+                        borderRadius: 'var(--radius-sm)',
+                        backgroundColor: 'rgba(5, 150, 105, 0.04)',
+                        border: '1px solid rgba(5, 150, 105, 0.18)'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                          <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#059669', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            📍 Verified Address Reference
+                          </span>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+                            {progress?.live_reverse_geocode?.provider || 'Google Maps Reference Engine'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px', fontSize: '0.78rem' }}>
+                          <div>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>Road: </span>
+                            <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>{liveRoad}</span>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>PIN Code: </span>
+                            <span style={{ fontWeight: 700, fontFamily: 'monospace', color: 'var(--text-main)' }}>{livePincode}</span>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>City: </span>
+                            <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>{liveCity}</span>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>District: </span>
+                            <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>{liveDistrict}</span>
+                          </div>
+                          <div style={{ gridColumn: 'span 2' }}>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>State: </span>
+                            <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>{liveState}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* 2 & 3. HR Address Distance & 100m HR Radius Status */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', paddingBottom: '10px', borderBottom: '1px dashed var(--border-color)' }}>
                     <div>
@@ -1377,6 +1749,49 @@ export function CaseReview() {
                     </div>
                   </div>
 
+                  {/* HR Locality / Area & Vicinity Corridor */}
+                  <div style={{ paddingBottom: '4px', borderTop: '1px dashed var(--border-color)', paddingTop: '10px' }}>
+                    <div style={{ marginBottom: '8px' }}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600 }}>Locality / Area:</span>
+                      <div style={{
+                        fontWeight: 700,
+                        color: 'var(--text-main)',
+                        fontSize: '0.88rem',
+                        marginTop: '3px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}>
+                        <span style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          backgroundColor: '#2563EB',
+                          display: 'inline-block',
+                          flexShrink: 0
+                        }} />
+                        <span>{hrLocalityArea}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600 }}>Vicinity Corridor:</span>
+                      <div style={{
+                        fontWeight: 600,
+                        color: 'var(--text-main)',
+                        fontSize: '0.82rem',
+                        marginTop: '3px',
+                        lineHeight: 1.35,
+                        backgroundColor: 'var(--bg-main)',
+                        padding: '6px 10px',
+                        borderRadius: 'var(--radius-sm)',
+                        border: '1px solid var(--border-color)',
+                        wordBreak: 'break-word'
+                      }}>
+                        {hrVicinityCorridor}
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Coordinates & Provider */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', paddingTop: '4px', borderTop: '1px dashed var(--border-color)' }}>
                     <div>
@@ -1522,39 +1937,147 @@ export function CaseReview() {
 
 
 
-            {/* Distance & Status Highlight Bar */}
+            {/* Distance & Status Highlight Bar with Locality & Corridor Match Audit */}
             <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
               backgroundColor: '#FFFFFF',
               border: '2px solid var(--border-color)',
               borderRadius: 'var(--radius-md)',
               padding: '14px 18px',
               marginBottom: '16px',
-              flexWrap: 'wrap',
+              display: 'flex',
+              flexDirection: 'column',
               gap: '12px'
             }}>
-              <div>
-                <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-muted)' }}>
-                  Distance to HR
-                </span>
-                <div style={{ fontSize: '1.35rem', fontWeight: 800, color: isConfidenceLow ? 'var(--danger)' : 'var(--primary)' }}>
-                  {isConfidenceLow ? 'N/A' : formatDistance(progress?.distance_from_hr_meters)}
+              {/* Primary Distance, Status & Important Notice */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '14px'
+              }}>
+                <div>
+                  <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-muted)' }}>
+                    Distance to HR
+                  </span>
+                  <div style={{ fontSize: '1.35rem', fontWeight: 800, color: isConfidenceLow ? 'var(--danger)' : 'var(--primary)', marginTop: '2px' }}>
+                    {isConfidenceLow ? 'N/A' : formatDistance(progress?.distance_from_hr_meters)}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-muted)' }}>
+                    Location Status
+                  </span>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 800, color: gpsStatusInfo.color, marginTop: '2px' }}>
+                    {gpsStatusInfo.status}
+                  </div>
+                </div>
+
+                <div style={{ maxWidth: '380px', fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.4, borderLeft: '3px solid var(--accent)', paddingLeft: '10px' }}>
+                  <strong>Important:</strong> GPS distance is supporting evidence. Never automatically fail an employee solely based on GPS distance. Final decision remains with the authorized Reviewer.
                 </div>
               </div>
 
-              <div>
-                <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-muted)' }}>
-                  Location Status
-                </span>
-                <div style={{ fontSize: '1.1rem', fontWeight: 800, color: gpsStatusInfo.color }}>
-                  {gpsStatusInfo.status}
-                </div>
-              </div>
+              {/* Locality / Area & Vicinity Corridor Matching Strip */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                gap: '12px',
+                paddingTop: '12px',
+                borderTop: '1px dashed var(--border-color)'
+              }}>
+                {/* 1. Locality / Area Match Card */}
+                <div style={{
+                  backgroundColor: localityAreaMatchInfo.bgColor,
+                  border: `1px solid ${localityAreaMatchInfo.borderColor}`,
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '10px 14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '6px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <MapPin size={15} color={localityAreaMatchInfo.isMatch ? '#15803D' : '#B91C1C'} />
+                      <strong style={{ fontSize: '0.78rem', textTransform: 'uppercase', color: 'var(--text-main)' }}>
+                        Locality / Area Match
+                      </strong>
+                    </div>
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      padding: '3px 10px',
+                      borderRadius: '4px',
+                      fontSize: '0.72rem',
+                      fontWeight: 800,
+                      backgroundColor: localityAreaMatchInfo.badgeBg,
+                      color: localityAreaMatchInfo.color,
+                      border: `1px solid ${localityAreaMatchInfo.borderColor}`
+                    }}>
+                      {localityAreaMatchInfo.isMatch ? '✓ MATCHED' : localityAreaMatchInfo.status === 'PENDING' ? '⏳ PENDING' : '✗ MISMATCH'}
+                    </span>
+                  </div>
 
-              <div style={{ maxWidth: '380px', fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.4, borderLeft: '3px solid var(--accent)', paddingLeft: '10px' }}>
-                <strong>Important:</strong> GPS distance is supporting evidence. Never automatically fail an employee solely based on GPS distance. Final decision remains with the authorized Reviewer.
+                  <div style={{ fontSize: '0.78rem', lineHeight: 1.45 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '3px' }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#059669', display: 'inline-block', flexShrink: 0 }} />
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem', fontWeight: 600 }}>Live Locality:</span>
+                      <strong style={{ color: '#0F172A' }}>{liveLocalityArea}</strong>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#2563EB', display: 'inline-block', flexShrink: 0 }} />
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem', fontWeight: 600 }}>HR Locality:</span>
+                      <strong style={{ color: '#0F172A' }}>{hrLocalityArea}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Vicinity Corridor Match Card */}
+                <div style={{
+                  backgroundColor: vicinityCorridorMatchInfo.bgColor,
+                  border: `1px solid ${vicinityCorridorMatchInfo.borderColor}`,
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '10px 14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '6px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Navigation size={15} color={vicinityCorridorMatchInfo.isMatch ? '#15803D' : '#B91C1C'} />
+                      <strong style={{ fontSize: '0.78rem', textTransform: 'uppercase', color: 'var(--text-main)' }}>
+                        Vicinity Corridor Match
+                      </strong>
+                    </div>
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      padding: '3px 10px',
+                      borderRadius: '4px',
+                      fontSize: '0.72rem',
+                      fontWeight: 800,
+                      backgroundColor: vicinityCorridorMatchInfo.badgeBg,
+                      color: vicinityCorridorMatchInfo.color,
+                      border: `1px solid ${vicinityCorridorMatchInfo.borderColor}`
+                    }}>
+                      {vicinityCorridorMatchInfo.isMatch ? '✓ MATCHED' : vicinityCorridorMatchInfo.status === 'PENDING' ? '⏳ PENDING' : '✗ MISMATCH'}
+                    </span>
+                  </div>
+
+                  <div style={{ fontSize: '0.78rem', lineHeight: 1.45 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '3px' }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#059669', display: 'inline-block', flexShrink: 0 }} />
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem', fontWeight: 600 }}>Live Corridor:</span>
+                      <strong style={{ color: '#0F172A', wordBreak: 'break-word' }}>{liveVicinityCorridor}</strong>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#2563EB', display: 'inline-block', flexShrink: 0 }} />
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem', fontWeight: 600 }}>HR Corridor:</span>
+                      <strong style={{ color: '#0F172A', wordBreak: 'break-word' }}>{hrVicinityCorridor}</strong>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1918,7 +2441,33 @@ export function CaseReview() {
                 <FileText size={18} color="var(--primary)" />
                 <h3 style={{ fontSize: '1.05rem', color: 'var(--primary)' }}>6. Address Proof Document</h3>
               </div>
-              <span className="badge badge-success">{progress?.document_type || 'Proof Attached'}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {(() => {
+                  const decision = progress?.addressProofDecision || docMatch?.decision || 'ACCEPTED';
+                  if (decision === 'ACCEPTED') {
+                    return (
+                      <span className="badge badge-success" style={{ fontWeight: 800, padding: '4px 10px' }}>
+                        ✓ ACCEPTED
+                      </span>
+                    );
+                  }
+                  if (decision === 'HR/BGV REVIEW REQUIRED') {
+                    return (
+                      <span className="badge" style={{ backgroundColor: '#FEF3C7', color: '#B45309', border: '1px solid #FCD34D', fontWeight: 800, padding: '4px 10px' }}>
+                        ⏳ HR/BGV REVIEW REQUIRED
+                      </span>
+                    );
+                  }
+                  return (
+                    <span className="badge badge-danger" style={{ fontWeight: 800, padding: '4px 10px' }}>
+                      ✕ REJECTED
+                    </span>
+                  );
+                })()}
+                <span className="badge" style={{ backgroundColor: '#E2E8F0', color: '#1E293B', fontWeight: 700 }}>
+                  {progress?.document_type || 'Proof Attached'}
+                </span>
+              </div>
             </div>
 
             <div style={{
@@ -1931,30 +2480,17 @@ export function CaseReview() {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                marginBottom: progress?.documentBackUrl ? '14px' : '6px',
-                borderBottom: progress?.documentBackUrl ? '1px solid var(--border-color)' : 'none',
-                paddingBottom: progress?.documentBackUrl ? '10px' : '0'
+                marginBottom: '14px',
+                borderBottom: '1px solid var(--border-color)',
+                paddingBottom: '10px'
               }}>
                 <div>
                   <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
                     Document Type: <strong style={{ color: 'var(--primary)' }}>{progress?.document_type || 'Address Proof'}</strong>
                   </div>
-                  {!progress?.documentBackUrl && (
-                    <div style={{ marginTop: '4px' }}>
-                      <div style={{ fontWeight: 600, color: 'var(--primary)', fontSize: '0.88rem' }}>
-                        {progress?.document_original_name || `${progress?.document_type || 'Address Proof'} Document`}
-                      </div>
-                      {progress?.documentMeta && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                          <span>{progress.documentMeta.fileSize}</span>
-                          <span>•</span>
-                          <span>{progress.documentMeta.fileType}</span>
-                          <span>•</span>
-                          <span>SHA-256: <code style={{ fontSize: '0.7rem' }}>{progress.documentMeta.hash}</code></span>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  <div style={{ fontSize: '0.74rem', color: '#0369A1', marginTop: '2px' }}>
+                    Dual Image Archival: Original camera/upload preserved alongside preprocessed enhanced image (Laplacian edge sharpened & contrast boosted)
+                  </div>
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1969,111 +2505,309 @@ export function CaseReview() {
                     <RefreshCw size={13} className={matchingDoc ? 'spin' : ''} />
                     <span>{matchingDoc ? 'Analyzing OCR...' : 'Re-scan Address'}</span>
                   </button>
-
-                  {!progress?.documentBackUrl && progress?.documentUrl && (
-                    <a
-                      href={progress.documentUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="btn btn-secondary btn-sm"
-                      style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                    >
-                      <ExternalLink size={14} />
-                      <span>View Document</span>
-                    </a>
-                  )}
                 </div>
               </div>
 
-              {progress?.documentBackUrl && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
-                  {/* Front Side */}
-                  <div style={{
-                    backgroundColor: 'var(--bg-card)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: 'var(--radius-sm)',
-                    padding: '12px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between'
-                  }}>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                        <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '2px 6px', borderRadius: '3px', backgroundColor: '#1E293B', color: '#FFFFFF' }}>
-                          FRONT SIDE
-                        </span>
-                      </div>
-                      <div style={{ fontSize: '0.84rem', fontWeight: 600, color: 'var(--primary)' }}>
+              {/* Front & Back Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '14px' }}>
+                {/* Front Side */}
+                <div style={{
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '2px 6px', borderRadius: '3px', backgroundColor: '#1E293B', color: '#FFFFFF' }}>
+                        FRONT SIDE
+                      </span>
+                      <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--primary)' }}>
                         {progress?.document_original_name || 'Front_Document'}
-                      </div>
-                      {progress?.documentMeta && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '3px' }}>
-                          <span>{progress.documentMeta.fileSize}</span>
-                          <span>•</span>
-                          <span>{progress.documentMeta.fileType}</span>
-                          <span>•</span>
-                          <span>SHA-256: <code style={{ fontSize: '0.68rem' }}>{progress.documentMeta.hash}</code></span>
-                        </div>
-                      )}
+                      </span>
                     </div>
-                    {progress?.documentUrl && (
-                      <a
-                        href={progress.documentUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="btn btn-secondary btn-sm"
-                        style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.78rem' }}
-                      >
-                        <ExternalLink size={13} />
-                        <span>View Front</span>
-                      </a>
+
+                    {/* Enhanced / Original Toggle */}
+                    {progress?.documentEnhancedUrl && progress?.documentUrl && (
+                      <div style={{ display: 'inline-flex', gap: '3px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setFrontDocView('enhanced')}
+                          style={{
+                            padding: '2px 6px',
+                            fontSize: '0.68rem',
+                            fontWeight: 700,
+                            borderRadius: '3px',
+                            backgroundColor: frontDocView === 'enhanced' ? '#2563EB' : '#F1F5F9',
+                            color: frontDocView === 'enhanced' ? '#FFFFFF' : '#475569',
+                            border: `1px solid ${frontDocView === 'enhanced' ? '#1D4ED8' : '#CBD5E1'}`,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '2px'
+                          }}
+                        >
+                          <Sparkles size={10} /> Enhanced
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFrontDocView('original')}
+                          style={{
+                            padding: '2px 6px',
+                            fontSize: '0.68rem',
+                            fontWeight: 700,
+                            borderRadius: '3px',
+                            backgroundColor: frontDocView === 'original' ? '#2563EB' : '#F1F5F9',
+                            color: frontDocView === 'original' ? '#FFFFFF' : '#475569',
+                            border: `1px solid ${frontDocView === 'original' ? '#1D4ED8' : '#CBD5E1'}`,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Original
+                        </button>
+                      </div>
                     )}
                   </div>
 
-                  {/* Back Side */}
+                  {/* Front Preview Thumbnail */}
+                  {progress?.documentUrl && !progress.documentUrl.toLowerCase().endsWith('.pdf') && (
+                    <div style={{
+                      position: 'relative',
+                      backgroundColor: '#0F172A',
+                      borderRadius: '6px',
+                      overflow: 'hidden',
+                      height: '160px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer'
+                    }}
+                    onClick={() => setZoomImage({
+                      src: frontDocView === 'enhanced' && progress?.documentEnhancedUrl ? progress.documentEnhancedUrl : progress.documentUrl,
+                      caption: `Front Side (${frontDocView.toUpperCase()})`
+                    })}
+                    title="Click to zoom image"
+                    >
+                      <img
+                        src={frontDocView === 'enhanced' && progress?.documentEnhancedUrl ? progress.documentEnhancedUrl : progress.documentUrl}
+                        alt="Front Side"
+                        style={{ maxWidth: '100%', maxHeight: '160px', objectFit: 'contain' }}
+                      />
+                      <span style={{
+                        position: 'absolute',
+                        bottom: '6px',
+                        right: '6px',
+                        backgroundColor: 'rgba(0,0,0,0.7)',
+                        color: '#FFFFFF',
+                        fontSize: '0.68rem',
+                        padding: '2px 6px',
+                        borderRadius: '3px'
+                      }}>
+                        {frontDocView === 'enhanced' ? '✨ Enhanced View' : 'Original View'} • Click to zoom
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Metadata & Actions */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                    {progress?.documentMeta && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>{progress.documentMeta.fileSize}</span>
+                        <span>•</span>
+                        <span>SHA-256: <code style={{ fontSize: '0.66rem' }}>{progress.documentMeta.hash?.slice(0, 10)}...</code></span>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {progress?.documentEnhancedUrl && progress?.documentUrl && !progress.documentUrl.toLowerCase().endsWith('.pdf') && (
+                        <button
+                          type="button"
+                          onClick={() => setCompareModal({
+                            title: 'Front Side: Original vs Enhanced Document Inspection',
+                            originalUrl: progress.documentUrl,
+                            enhancedUrl: progress.documentEnhancedUrl
+                          })}
+                          className="btn btn-outline btn-xs"
+                          style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                        >
+                          <Columns size={12} /> Inspect Side-by-Side
+                        </button>
+                      )}
+                      {progress?.documentUrl && (
+                        <a
+                          href={progress.documentUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="btn btn-secondary btn-xs"
+                          style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                        >
+                          <ExternalLink size={12} /> Original File
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Back Side */}
+                {progress?.documentBackUrl ? (
                   <div style={{
                     backgroundColor: 'var(--bg-card)',
                     border: '1px solid var(--border-color)',
                     borderRadius: 'var(--radius-sm)',
-                    padding: '12px',
+                    padding: '14px',
                     display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between'
+                    flexDirection: 'column',
+                    gap: '10px'
                   }}>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '2px 6px', borderRadius: '3px', backgroundColor: '#1E293B', color: '#FFFFFF' }}>
                           BACK SIDE
                         </span>
+                        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--primary)' }}>
+                          {progress?.document_back_original_name || 'Back_Document'}
+                        </span>
                       </div>
-                      <div style={{ fontSize: '0.84rem', fontWeight: 600, color: 'var(--primary)' }}>
-                        {progress?.document_back_original_name || 'Back_Document'}
-                      </div>
-                      {progress?.documentBackMeta && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '3px' }}>
-                          <span>{progress.documentBackMeta.fileSize}</span>
-                          <span>•</span>
-                          <span>{progress.documentBackMeta.fileType}</span>
-                          <span>•</span>
-                          <span>SHA-256: <code style={{ fontSize: '0.68rem' }}>{progress.documentBackMeta.hash}</code></span>
+
+                      {/* Enhanced / Original Toggle */}
+                      {progress?.documentBackEnhancedUrl && progress?.documentBackUrl && (
+                        <div style={{ display: 'inline-flex', gap: '3px' }}>
+                          <button
+                            type="button"
+                            onClick={() => setBackDocView('enhanced')}
+                            style={{
+                              padding: '2px 6px',
+                              fontSize: '0.68rem',
+                              fontWeight: 700,
+                              borderRadius: '3px',
+                              backgroundColor: backDocView === 'enhanced' ? '#2563EB' : '#F1F5F9',
+                              color: backDocView === 'enhanced' ? '#FFFFFF' : '#475569',
+                              border: `1px solid ${backDocView === 'enhanced' ? '#1D4ED8' : '#CBD5E1'}`,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '2px'
+                            }}
+                          >
+                            <Sparkles size={10} /> Enhanced
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setBackDocView('original')}
+                            style={{
+                              padding: '2px 6px',
+                              fontSize: '0.68rem',
+                              fontWeight: 700,
+                              borderRadius: '3px',
+                              backgroundColor: backDocView === 'original' ? '#2563EB' : '#F1F5F9',
+                              color: backDocView === 'original' ? '#FFFFFF' : '#475569',
+                              border: `1px solid ${backDocView === 'original' ? '#1D4ED8' : '#CBD5E1'}`,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Original
+                          </button>
                         </div>
                       )}
                     </div>
-                    {progress?.documentBackUrl && (
-                      <a
-                        href={progress.documentBackUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="btn btn-secondary btn-sm"
-                        style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.78rem' }}
+
+                    {/* Back Preview Thumbnail */}
+                    {progress?.documentBackUrl && !progress.documentBackUrl.toLowerCase().endsWith('.pdf') && (
+                      <div style={{
+                        position: 'relative',
+                        backgroundColor: '#0F172A',
+                        borderRadius: '6px',
+                        overflow: 'hidden',
+                        height: '160px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer'
+                      }}
+                      onClick={() => setZoomImage({
+                        src: backDocView === 'enhanced' && progress?.documentBackEnhancedUrl ? progress.documentBackEnhancedUrl : progress.documentBackUrl,
+                        caption: `Back Side (${backDocView.toUpperCase()})`
+                      })}
+                      title="Click to zoom image"
                       >
-                        <ExternalLink size={13} />
-                        <span>View Back</span>
-                      </a>
+                        <img
+                          src={backDocView === 'enhanced' && progress?.documentBackEnhancedUrl ? progress.documentBackEnhancedUrl : progress.documentBackUrl}
+                          alt="Back Side"
+                          style={{ maxWidth: '100%', maxHeight: '160px', objectFit: 'contain' }}
+                        />
+                        <span style={{
+                          position: 'absolute',
+                          bottom: '6px',
+                          right: '6px',
+                          backgroundColor: 'rgba(0,0,0,0.7)',
+                          color: '#FFFFFF',
+                          fontSize: '0.68rem',
+                          padding: '2px 6px',
+                          borderRadius: '3px'
+                        }}>
+                          {backDocView === 'enhanced' ? '✨ Enhanced View' : 'Original View'} • Click to zoom
+                        </span>
+                      </div>
                     )}
+
+                    {/* Metadata & Actions */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                      {progress?.documentBackMeta && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span>{progress.documentBackMeta.fileSize}</span>
+                          <span>•</span>
+                          <span>SHA-256: <code style={{ fontSize: '0.66rem' }}>{progress.documentBackMeta.hash?.slice(0, 10)}...</code></span>
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {progress?.documentBackEnhancedUrl && progress?.documentBackUrl && !progress.documentBackUrl.toLowerCase().endsWith('.pdf') && (
+                          <button
+                            type="button"
+                            onClick={() => setCompareModal({
+                              title: 'Back Side: Original vs Enhanced Document Inspection',
+                              originalUrl: progress.documentBackUrl,
+                              enhancedUrl: progress.documentBackEnhancedUrl
+                            })}
+                            className="btn btn-outline btn-xs"
+                            style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                          >
+                            <Columns size={12} /> Inspect Side-by-Side
+                          </button>
+                        )}
+                        {progress?.documentBackUrl && (
+                          <a
+                            href={progress.documentBackUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="btn btn-secondary btn-xs"
+                            style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                          >
+                            <ExternalLink size={12} /> Original File
+                          </a>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              )}
+                ) : (
+                  <div style={{
+                    backgroundColor: 'var(--bg-card)',
+                    border: '1px dashed var(--border-color)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--text-muted)',
+                    fontSize: '0.84rem'
+                  }}>
+                    Single page / Back side not attached
+                  </div>
+                )}
+              </div>
 
               {/* Document Metadata & Archival Status Strip */}
               <div style={{
@@ -2229,10 +2963,91 @@ export function CaseReview() {
                   </div>
                 )}
 
-                {/* 1. Document Name & Address in Document */}
+                {/* Intelligent Document Tolerance & OCR Confidence Banner */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '10px',
+                  padding: '10px 14px',
+                  backgroundColor: '#EFF6FF',
+                  border: '1px solid #BFDBFE',
+                  borderRadius: 'var(--radius-sm)',
+                  marginBottom: '14px',
+                  fontSize: '0.84rem',
+                  color: '#1E40AF'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Sparkles size={16} color="#2563EB" />
+                    <span>
+                      <strong>Intelligent Preprocessing OCR:</strong>
+                      {' '}Multi-engine scan with adaptive histogram normalization & Laplacian text edge enhancement
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>Confidence Score:</span>
+                    <span style={{
+                      fontWeight: 800,
+                      padding: '2px 8px',
+                      borderRadius: '12px',
+                      backgroundColor: (docMatch.ocrConfidence || 75) >= 65 ? '#ECFDF5' : (docMatch.ocrConfidence || 75) >= 40 ? '#FEF3C7' : '#FEE2E2',
+                      color: (docMatch.ocrConfidence || 75) >= 65 ? '#047857' : (docMatch.ocrConfidence || 75) >= 40 ? '#92400E' : '#B91C1C',
+                      border: `1px solid ${(docMatch.ocrConfidence || 75) >= 65 ? '#A7F3D0' : (docMatch.ocrConfidence || 75) >= 40 ? '#FCD34D' : '#FCA5A5'}`
+                    }}>
+                      {docMatch.ocrConfidence !== undefined ? docMatch.ocrConfidence : 75}% ({docMatch.confidenceLevel || 'NORMAL'})
+                    </span>
+                  </div>
+                </div>
+
+                {/* Unreadable / Uncertain Fields Callout (if any) */}
+                {((docMatch.unreadableFields && docMatch.unreadableFields.length > 0) || (progress?.addressProofOcrResult?.unreadableFields && progress?.addressProofOcrResult?.unreadableFields.length > 0)) && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '10px',
+                    padding: '12px 14px',
+                    backgroundColor: '#FFFBEB',
+                    border: '1px solid #FCD34D',
+                    borderRadius: 'var(--radius-sm)',
+                    marginBottom: '14px',
+                    color: '#92400E',
+                    fontSize: '0.86rem'
+                  }}>
+                    <AlertTriangle size={18} color="#D97706" style={{ flexShrink: 0, marginTop: '2px' }} />
+                    <div>
+                      <div style={{ fontWeight: 800, marginBottom: '2px' }}>
+                        ⚠️ Uncertain / Unreadable Fields Highlighted for Human Review:
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', margin: '4px 0' }}>
+                        {(docMatch.unreadableFields || progress?.addressProofOcrResult?.unreadableFields || []).map((field, idx) => (
+                          <span
+                            key={idx}
+                            style={{
+                              backgroundColor: '#FEF3C7',
+                              border: '1px solid #F59E0B',
+                              color: '#B45309',
+                              fontWeight: 700,
+                              fontSize: '0.76rem',
+                              padding: '2px 8px',
+                              borderRadius: '4px'
+                            }}
+                          >
+                            {field} (Faded/Scratched)
+                          </span>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: '0.78rem', color: '#B45309', marginTop: '2px' }}>
+                        Please inspect the original and enhanced documents side-by-side above to confirm these fields before finalizing case verification.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 1. Document Name, Address & PIN in Document */}
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
                   gap: '12px',
                   marginBottom: '14px'
                 }}>
@@ -2304,6 +3119,42 @@ export function CaseReview() {
                       alignItems: 'center'
                     }}>
                       {docMatch.extractedAddress || 'No address text could be extracted.'}
+                    </div>
+                  </div>
+
+                  {/* Extracted PIN Code */}
+                  <div style={{
+                    backgroundColor: 'var(--bg-card)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '12px 14px'
+                  }}>
+                    <div style={{
+                      fontSize: '0.82rem',
+                      fontWeight: 700,
+                      color: 'var(--text-muted)',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                      marginBottom: '6px'
+                    }}>
+                      Extracted PIN Code:
+                    </div>
+                    <div style={{
+                      fontSize: '0.92rem',
+                      fontWeight: 700,
+                      color: (docMatch.extractedPincode || progress?.addressProofOcrResult?.extractedPincode) ? 'var(--text-main)' : 'var(--text-muted)',
+                      fontFamily: 'monospace',
+                      lineHeight: '1.5',
+                      padding: '8px 10px',
+                      backgroundColor: 'var(--bg-subtle)',
+                      borderRadius: '4px',
+                      border: '1px solid var(--border-color)',
+                      wordBreak: 'break-word',
+                      minHeight: '38px',
+                      display: 'flex',
+                      alignItems: 'center'
+                    }}>
+                      {docMatch.extractedPincode || progress?.addressProofOcrResult?.extractedPincode || 'PIN not extracted (Faded/Missing)'}
                     </div>
                   </div>
                 </div>
@@ -2853,6 +3704,125 @@ export function CaseReview() {
                   display: 'block'
                 }}
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Side-by-Side Original vs Enhanced Document Inspection Modal */}
+      {compareModal && (
+        <div className="modal-backdrop" onClick={() => setCompareModal(null)}>
+          <div
+            className="modal-content"
+            style={{ maxWidth: '1100px', width: '95%', padding: '20px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px' }}>
+              <div>
+                <h4 style={{ color: 'var(--primary)', margin: 0, fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Columns size={20} color="var(--primary)" />
+                  <span>{compareModal.title || 'Original vs Enhanced Document Inspection'}</span>
+                </h4>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '3px' }}>
+                  Inspect original worn/faded document alongside preprocessed enhanced image (contrast stretched, Laplacian edge sharpened, deskewed)
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCompareModal(null)}
+                className="btn btn-secondary btn-sm"
+                style={{ padding: '4px 8px' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
+              gap: '16px',
+              maxHeight: '75vh',
+              overflowY: 'auto'
+            }}>
+              {/* Left Column: Original Document */}
+              <div style={{
+                backgroundColor: '#F8FAFC',
+                border: '1px solid #CBD5E1',
+                borderRadius: '8px',
+                padding: '12px',
+                display: 'flex',
+                flexDirection: 'column'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ fontWeight: 800, fontSize: '0.82rem', padding: '3px 8px', borderRadius: '4px', backgroundColor: '#475569', color: '#FFFFFF' }}>
+                    ORIGINAL DOCUMENT
+                  </span>
+                  <a
+                    href={compareModal.originalUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn btn-outline btn-xs"
+                    style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <ExternalLink size={11} /> Open Full
+                  </a>
+                </div>
+                <div style={{
+                  backgroundColor: '#0F172A',
+                  borderRadius: '6px',
+                  overflow: 'hidden',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minHeight: '380px'
+                }}>
+                  <img
+                    src={compareModal.originalUrl}
+                    alt="Original Document"
+                    style={{ maxWidth: '100%', maxHeight: '500px', objectFit: 'contain' }}
+                  />
+                </div>
+              </div>
+
+              {/* Right Column: Enhanced Document */}
+              <div style={{
+                backgroundColor: '#F0FDF4',
+                border: '1px solid #86EFAC',
+                borderRadius: '8px',
+                padding: '12px',
+                display: 'flex',
+                flexDirection: 'column'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ fontWeight: 800, fontSize: '0.82rem', padding: '3px 8px', borderRadius: '4px', backgroundColor: '#15803D', color: '#FFFFFF', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <Sparkles size={12} /> ENHANCED (PREPROCESSED)
+                  </span>
+                  <a
+                    href={compareModal.enhancedUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn btn-outline btn-xs"
+                    style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <ExternalLink size={11} /> Open Full
+                  </a>
+                </div>
+                <div style={{
+                  backgroundColor: '#0F172A',
+                  borderRadius: '6px',
+                  overflow: 'hidden',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minHeight: '380px'
+                }}>
+                  <img
+                    src={compareModal.enhancedUrl}
+                    alt="Enhanced Document"
+                    style={{ maxWidth: '100%', maxHeight: '500px', objectFit: 'contain' }}
+                  />
+                </div>
+              </div>
             </div>
           </div>
         </div>

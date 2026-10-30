@@ -15,7 +15,7 @@ import { StepAddressProof } from './StepAddressProof';
 import { StepJointSelfie } from './StepJointSelfie';
 import { StepDeclarationReview } from './StepDeclarationReview';
 import { StepSuccess } from './StepSuccess';
-import { ShieldCheck, LogIn } from 'lucide-react';
+import { LogIn } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export function EmployeeWizard() {
@@ -58,19 +58,21 @@ export function EmployeeWizard() {
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '5px',
-            fontSize: '0.8rem',
-            fontWeight: 600,
+            gap: '6px',
+            fontSize: '0.82rem',
+            fontWeight: 700,
             color: '#FFFFFF',
             textDecoration: 'none',
-            padding: '5px 10px',
+            padding: '7px 14px',
             borderRadius: 'var(--radius-sm)',
-            backgroundColor: 'rgba(255,255,255,0.16)',
-            border: '1px solid rgba(255,255,255,0.22)',
-            transition: 'all 0.2s ease'
+            backgroundColor: 'rgba(255,255,255,0.18)',
+            border: '1px solid rgba(15, 255, 23, 0.45)',
+            transition: 'all 0.2s ease',
+            backdropFilter: 'blur(8px)',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
           }}
         >
-          <LogIn size={14} />
+          <LogIn size={15} color="#0FFF17" strokeWidth={2.4} />
           <span>HR Login</span>
         </Link>
       </header>

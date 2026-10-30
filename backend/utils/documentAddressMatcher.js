@@ -959,14 +959,38 @@ async function performDocumentAddressMatch(employee, progress) {
     statusMessage = 'REVIEW REQUIRED';
   }
 
+  const extractedPincode = extractPincode(combinedDocText) || extractPincode(extractedAddress) || '';
+  const unreadableFields = [];
+  if (!extractedName || extractedName.includes('could not be')) unreadableFields.push('Employee Name');
+  if (!extractedAddress || extractedAddress.includes('could not be') || extractedAddress.length < 8) unreadableFields.push('Residential Address');
+  if (!extractedPincode) unreadableFields.push('PIN Code');
+
+  let decision = 'HR/BGV REVIEW REQUIRED';
+  if (overallResult === 'MATCHED') {
+    decision = 'ACCEPTED';
+  } else if (overallResult === 'NOT MATCHED' && !addressCouldBeRead) {
+    decision = 'REJECTED';
+  } else {
+    decision = 'HR/BGV REVIEW REQUIRED';
+  }
+
+  const formatUrl = (p) => p ? `/uploads/${path.basename(p)}` : null;
+
   return {
     success: true,
     documentAvailable: true,
+    decision,
     documentType: progress.document_type || 'Address Proof',
     fileName: progress.document_original_name || (docPath ? path.basename(docPath) : 'Front Document'),
     backFileName: progress.document_back_original_name || (backDocPath ? path.basename(backDocPath) : null),
     extractedAddress: extractedAddress || rawDocText.substring(0, 160).trim(),
     extractedName: extractedName || 'Name text could not be clearly extracted.',
+    extractedPincode,
+    unreadableFields,
+    originalFrontUrl: formatUrl(docPath),
+    enhancedFrontUrl: formatUrl(progress.document_enhanced_path),
+    originalBackUrl: formatUrl(backDocPath),
+    enhancedBackUrl: formatUrl(progress.document_back_enhanced_path),
     languageDetection: langDetection,
     detectedLanguages: langDetection.languages,
     isMixedLanguage: langDetection.isMixedLanguage,
@@ -982,7 +1006,7 @@ async function performDocumentAddressMatch(employee, progress) {
     employeeMatchScore: empComparison.score,
     overallResult,
     statusMessage,
-    requiresManualReview: overallResult === 'REVIEW REQUIRED',
+    requiresManualReview: overallResult === 'REVIEW REQUIRED' || decision === 'HR/BGV REVIEW REQUIRED',
     readable: true,
     components: {
       name: {
@@ -1003,5 +1027,7 @@ module.exports = {
   extractNameFromText,
   compareNameComponents,
   compareAddressComponents,
-  extractTextFromPdfBuffer
+  extractTextFromPdfBuffer,
+  extractPincode,
+  extractHouseNumber
 };

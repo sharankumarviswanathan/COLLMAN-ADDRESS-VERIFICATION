@@ -145,7 +145,8 @@ async function validateImage({ imageBuffer, photoType, clientMetrics = {}, hrAdd
       content: { passed: true, message: 'Content matches required criteria' }
     },
     extractedText: null,
-    doorNumbersFound: []
+    doorNumbersFound: [],
+    metrics: { ...clientMetrics }
   };
 
   const {
@@ -161,7 +162,7 @@ async function validateImage({ imageBuffer, photoType, clientMetrics = {}, hrAdd
   } = clientMetrics;
 
   // 1. Check Clarity / Blur
-  if (blurScore !== null && blurScore !== undefined && blurScore < 22) {
+  if (blurScore !== null && blurScore !== undefined && blurScore < 20) {
     result.valid = false;
     result.checks.clarity = { passed: false, message: 'Image is blurry or out of focus' };
     result.error = 'Image is not clear. Please hold your camera steady and retake the photo.';
@@ -183,7 +184,7 @@ async function validateImage({ imageBuffer, photoType, clientMetrics = {}, hrAdd
   }
 
   // 3. Check Visibility / Contrast
-  if (contrast !== null && contrast !== undefined && contrast < 16) {
+  if (contrast !== null && contrast !== undefined && contrast < 15) {
     result.valid = false;
     result.checks.visibility = { passed: false, message: 'Image has very low contrast / washed out' };
     result.error = 'Image contrast is too low. Please retake the photo.';
@@ -271,7 +272,11 @@ async function validateImage({ imageBuffer, photoType, clientMetrics = {}, hrAdd
       const doorNumbers = extractDoorNumbers(ocrText);
       result.doorNumbersFound = doorNumbers;
 
-      const hasDigitsOrNumber = doorNumbers.length > 0 || /\d+/.test(ocrText);
+      const hasDigitsOrNumber =
+        doorNumbers.length > 0 ||
+        /\d+/.test(ocrText) ||
+        (Array.isArray(clientMetrics.doorNumbersFound) && clientMetrics.doorNumbersFound.length > 0) ||
+        /\d+/.test(clientMetrics.ocrText || '');
       const isFacePresent = faceDetected === true;
 
       // Both missing

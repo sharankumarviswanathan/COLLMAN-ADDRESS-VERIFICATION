@@ -3,6 +3,7 @@ import { useVerification } from '../../context/VerificationContext';
 import { api } from '../../api/client';
 import { getCameraStream, stopMediaStream } from '../../lib/cameraHelper';
 import { validatePhotoInBrowser } from '../../lib/imageValidator';
+import { preprocessDocumentClientSide } from '../../lib/documentPreprocessor';
 import {
   FileText,
   Upload,
@@ -16,7 +17,9 @@ import {
   SwitchCamera,
   Trash2,
   ShieldCheck,
-  Check
+  Check,
+  Sparkles,
+  Info
 } from 'lucide-react';
 
 export function StepAddressProof() {
@@ -45,6 +48,7 @@ export function StepAddressProof() {
         file: null,
         dataUrl: progress.documentUrl,
         previewUrl: progress.documentUrl,
+        enhancedDataUrl: progress.documentEnhancedUrl || null,
         name: progress.documentOriginalName || 'Front_Address_Proof',
         size: null,
         type: isPdf ? 'pdf' : 'image',
@@ -62,6 +66,7 @@ export function StepAddressProof() {
         file: null,
         dataUrl: progress.documentBackUrl,
         previewUrl: progress.documentBackUrl,
+        enhancedDataUrl: progress.documentBackEnhancedUrl || null,
         name: progress.documentBackOriginalName || 'Back_Address_Proof',
         size: null,
         type: isPdf ? 'pdf' : 'image',
@@ -70,6 +75,10 @@ export function StepAddressProof() {
     }
     return null;
   });
+
+  // Preview Toggle Modes ('enhanced' | 'original')
+  const [frontViewMode, setFrontViewMode] = useState('enhanced');
+  const [backViewMode, setBackViewMode] = useState('enhanced');
 
   // Validation States
   const [frontValidation, setFrontValidation] = useState(null);
@@ -145,12 +154,15 @@ export function StepAddressProof() {
         };
         if (fDoc.file) payload.frontFile = fDoc.file;
         else if (fDoc.dataUrl) payload.frontBase64 = fDoc.dataUrl;
+        if (fDoc.enhancedDataUrl) payload.frontEnhancedBase64 = fDoc.enhancedDataUrl;
 
         const res = await api.verify.validateAddressProof(payload);
         setFrontValidation(res);
 
         if (!res.valid) {
           setValidationError(res.error || 'Front document validation failed.');
+        } else {
+          setValidationError('');
         }
       } catch (err) {
         console.error('Front validation error:', err);
@@ -173,12 +185,15 @@ export function StepAddressProof() {
         };
         if (bDoc.file) payload.backFile = bDoc.file;
         else if (bDoc.dataUrl) payload.backBase64 = bDoc.dataUrl;
+        if (bDoc.enhancedDataUrl) payload.backEnhancedBase64 = bDoc.enhancedDataUrl;
 
         const res = await api.verify.validateAddressProof(payload);
         setBackValidation(res);
 
         if (!res.valid) {
           setValidationError(res.error || 'Back document validation failed.');
+        } else {
+          setValidationError('');
         }
       } catch (err) {
         console.error('Back validation error:', err);
@@ -207,9 +222,11 @@ export function StepAddressProof() {
 
         if (fDoc.file) payload.frontFile = fDoc.file;
         else if (fDoc.dataUrl) payload.frontBase64 = fDoc.dataUrl;
+        if (fDoc.enhancedDataUrl) payload.frontEnhancedBase64 = fDoc.enhancedDataUrl;
 
         if (bDoc.file) payload.backFile = bDoc.file;
         else if (bDoc.dataUrl) payload.backBase64 = bDoc.dataUrl;
+        if (bDoc.enhancedDataUrl) payload.backEnhancedBase64 = bDoc.enhancedDataUrl;
 
         const res = await api.verify.validateAddressProof(payload);
         setCombinedValidation(res);
@@ -218,6 +235,8 @@ export function StepAddressProof() {
 
         if (!res.valid) {
           setValidationError(res.error || 'Document validation failed. Please check document quality or type.');
+        } else {
+          setValidationError('');
         }
       } catch (err) {
         console.error('Combined validation error:', err);
@@ -286,7 +305,7 @@ export function StepAddressProof() {
     }
   }
 
-  function takeSnapshot() {
+  async function takeSnapshot() {
     if (!videoRef.current || !activeSide) return;
 
     const video = videoRef.current;
@@ -306,18 +325,27 @@ export function StepAddressProof() {
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL('image/jpeg', 0.90);
 
+    const sideCaptured = activeSide;
+    stopCamera();
+
+    let enhancedDataUrl = null;
+    try {
+      const prep = await preprocessDocumentClientSide(dataUrl);
+      enhancedDataUrl = prep?.enhancedUrl || null;
+    } catch (pErr) {
+      console.warn('Intelligent preprocessing error on capture:', pErr);
+    }
+
     const docObj = {
       file: null,
       dataUrl: dataUrl,
       previewUrl: dataUrl,
-      name: `${docType.replace(/\s+/g, '_')}_${activeSide.toUpperCase()}_Photo.jpg`,
+      enhancedDataUrl: enhancedDataUrl,
+      name: `${docType.replace(/\s+/g, '_')}_${sideCaptured.toUpperCase()}_Photo.jpg`,
       size: Math.round((dataUrl.length * 3) / 4),
       type: 'image',
       isExisting: false
     };
-
-    const sideCaptured = activeSide;
-    stopCamera();
 
     if (sideCaptured === 'front') {
       setFrontDoc(docObj);
@@ -328,7 +356,7 @@ export function StepAddressProof() {
     }
   }
 
-  function handleFileSelection(e, side) {
+  async function handleFileSelection(e, side) {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -339,10 +367,24 @@ export function StepAddressProof() {
     }
 
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    let previewUrl = null;
+    let enhancedDataUrl = null;
+
+    if (!isPdf) {
+      previewUrl = URL.createObjectURL(file);
+      try {
+        const prep = await preprocessDocumentClientSide(previewUrl);
+        enhancedDataUrl = prep?.enhancedUrl || null;
+      } catch (pErr) {
+        console.warn('Client-side preprocessing error on file upload:', pErr);
+      }
+    }
+
     const docObj = {
       file: file,
       dataUrl: null,
-      previewUrl: isPdf ? null : URL.createObjectURL(file),
+      previewUrl: previewUrl,
+      enhancedDataUrl: enhancedDataUrl,
       name: file.name,
       size: file.size,
       type: isPdf ? 'pdf' : 'image',
@@ -408,11 +450,17 @@ export function StepAddressProof() {
       } else if (frontDoc.dataUrl) {
         payload.frontBase64 = frontDoc.dataUrl;
       }
+      if (frontDoc.enhancedDataUrl) {
+        payload.frontEnhancedBase64 = frontDoc.enhancedDataUrl;
+      }
 
       if (backDoc.file) {
         payload.backFile = backDoc.file;
       } else if (backDoc.dataUrl) {
         payload.backBase64 = backDoc.dataUrl;
+      }
+      if (backDoc.enhancedDataUrl) {
+        payload.backEnhancedBase64 = backDoc.enhancedDataUrl;
       }
 
       const res = await api.verify.uploadDocument(payload);
@@ -422,8 +470,11 @@ export function StepAddressProof() {
         documentType: docType,
         documentOriginalName: res.fileName,
         documentUrl: res.fileUrl,
+        documentEnhancedUrl: res.enhancedUrl || res.fileUrl,
         documentBackOriginalName: res.backFileName,
-        documentBackUrl: res.backFileUrl
+        documentBackUrl: res.backFileUrl,
+        documentBackEnhancedUrl: res.backEnhancedUrl || res.backFileUrl,
+        addressProofDecision: res.decision || (res.requiresManualReview ? 'HR/BGV REVIEW REQUIRED' : 'ACCEPTED')
       });
 
       nextStep();
@@ -438,8 +489,7 @@ export function StepAddressProof() {
   const isCompleteAndValid = Boolean(
     frontDoc &&
     backDoc &&
-    combinedValidation?.valid === true &&
-    combinedValidation?.qualityPassed === true
+    combinedValidation?.valid === true
   );
 
   return (
@@ -727,27 +777,27 @@ export function StepAddressProof() {
               <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
                 {frontDoc.type === 'image' && (frontDoc.previewUrl || frontDoc.dataUrl) ? (
                   <div style={{
-                    width: '90px',
-                    height: '68px',
+                    width: '94px',
+                    height: '72px',
                     borderRadius: '4px',
                     overflow: 'hidden',
                     border: '1px solid #CBD5E1',
                     flexShrink: 0,
-                    backgroundColor: '#000000',
+                    backgroundColor: '#0F172A',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center'
                   }}>
                     <img
-                      src={frontDoc.previewUrl || frontDoc.dataUrl}
+                      src={(frontViewMode === 'enhanced' && frontDoc.enhancedDataUrl) ? frontDoc.enhancedDataUrl : (frontDoc.previewUrl || frontDoc.dataUrl)}
                       alt="Front Side Preview"
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                     />
                   </div>
                 ) : (
                   <div style={{
-                    width: '90px',
-                    height: '68px',
+                    width: '94px',
+                    height: '72px',
                     borderRadius: '4px',
                     border: '1px solid #CBD5E1',
                     backgroundColor: '#FEE2E2',
@@ -770,6 +820,46 @@ export function StepAddressProof() {
                   <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '2px' }}>
                     {frontDoc.size ? `${(frontDoc.size / (1024 * 1024)).toFixed(2)} MB` : 'Attached'} • {frontDoc.type === 'pdf' ? 'PDF Document' : 'Photo / Image'}
                   </div>
+                  {frontDoc.enhancedDataUrl && (
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '6px' }}>
+                      <button
+                        type="button"
+                        onClick={() => setFrontViewMode('enhanced')}
+                        style={{
+                          padding: '2px 8px',
+                          fontSize: '0.72rem',
+                          borderRadius: '4px',
+                          fontWeight: 700,
+                          backgroundColor: frontViewMode === 'enhanced' ? '#2563EB' : '#F1F5F9',
+                          color: frontViewMode === 'enhanced' ? '#FFFFFF' : '#475569',
+                          border: `1px solid ${frontViewMode === 'enhanced' ? '#1D4ED8' : '#CBD5E1'}`,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px'
+                        }}
+                      >
+                        <Sparkles size={11} />
+                        <span>Enhanced</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFrontViewMode('original')}
+                        style={{
+                          padding: '2px 8px',
+                          fontSize: '0.72rem',
+                          borderRadius: '4px',
+                          fontWeight: 700,
+                          backgroundColor: frontViewMode === 'original' ? '#2563EB' : '#F1F5F9',
+                          color: frontViewMode === 'original' ? '#FFFFFF' : '#475569',
+                          border: `1px solid ${frontViewMode === 'original' ? '#1D4ED8' : '#CBD5E1'}`,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Original
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -943,27 +1033,27 @@ export function StepAddressProof() {
               <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
                 {backDoc.type === 'image' && (backDoc.previewUrl || backDoc.dataUrl) ? (
                   <div style={{
-                    width: '90px',
-                    height: '68px',
+                    width: '94px',
+                    height: '72px',
                     borderRadius: '4px',
                     overflow: 'hidden',
                     border: '1px solid #CBD5E1',
                     flexShrink: 0,
-                    backgroundColor: '#000000',
+                    backgroundColor: '#0F172A',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center'
                   }}>
                     <img
-                      src={backDoc.previewUrl || backDoc.dataUrl}
+                      src={(backViewMode === 'enhanced' && backDoc.enhancedDataUrl) ? backDoc.enhancedDataUrl : (backDoc.previewUrl || backDoc.dataUrl)}
                       alt="Back Side Preview"
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                     />
                   </div>
                 ) : (
                   <div style={{
-                    width: '90px',
-                    height: '68px',
+                    width: '94px',
+                    height: '72px',
                     borderRadius: '4px',
                     border: '1px solid #CBD5E1',
                     backgroundColor: '#FEE2E2',
@@ -986,6 +1076,46 @@ export function StepAddressProof() {
                   <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '2px' }}>
                     {backDoc.size ? `${(backDoc.size / (1024 * 1024)).toFixed(2)} MB` : 'Attached'} • {backDoc.type === 'pdf' ? 'PDF Document' : 'Photo / Image'}
                   </div>
+                  {backDoc.enhancedDataUrl && (
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '6px' }}>
+                      <button
+                        type="button"
+                        onClick={() => setBackViewMode('enhanced')}
+                        style={{
+                          padding: '2px 8px',
+                          fontSize: '0.72rem',
+                          borderRadius: '4px',
+                          fontWeight: 700,
+                          backgroundColor: backViewMode === 'enhanced' ? '#2563EB' : '#F1F5F9',
+                          color: backViewMode === 'enhanced' ? '#FFFFFF' : '#475569',
+                          border: `1px solid ${backViewMode === 'enhanced' ? '#1D4ED8' : '#CBD5E1'}`,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px'
+                        }}
+                      >
+                        <Sparkles size={11} />
+                        <span>Enhanced</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBackViewMode('original')}
+                        style={{
+                          padding: '2px 8px',
+                          fontSize: '0.72rem',
+                          borderRadius: '4px',
+                          fontWeight: 700,
+                          backgroundColor: backViewMode === 'original' ? '#2563EB' : '#F1F5F9',
+                          color: backViewMode === 'original' ? '#FFFFFF' : '#475569',
+                          border: `1px solid ${backViewMode === 'original' ? '#1D4ED8' : '#CBD5E1'}`,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Original
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1085,29 +1215,64 @@ export function StepAddressProof() {
         </div>
       )}
 
-      {/* (C) Validation PASSED Green Quality Result Box */}
+      {/* (C) Validation Quality Result Box: ACCEPTED or HR/BGV REVIEW REQUIRED */}
       {combinedValidation && combinedValidation.valid && !validatingSide && (
         <div style={{
-          backgroundColor: '#ECFDF5',
-          border: '2px solid #10B981',
+          backgroundColor: (combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? '#FFFBEB' : '#ECFDF5',
+          border: `2px solid ${(combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? '#F59E0B' : '#10B981'}`,
           borderRadius: 'var(--radius-md)',
           padding: '18px',
           marginBottom: '22px',
           boxShadow: 'var(--shadow-sm)'
         }}>
+          {/* Header */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
             gap: '10px',
             fontWeight: 800,
             fontSize: '1.05rem',
-            color: '#047857',
-            marginBottom: '14px'
+            color: (combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? '#B45309' : '#047857',
+            marginBottom: '10px'
           }}>
-            <CheckCircle2 size={24} color="#059669" />
-            <span>Document Quality Verified & Clear – PASSED</span>
+            {(combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? (
+              <ShieldCheck size={24} color="#D97706" />
+            ) : (
+              <CheckCircle2 size={24} color="#059669" />
+            )}
+            <span>
+              {(combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview)
+                ? 'Document Accepted – Sent for HR/BGV Manual Review'
+                : 'Document Quality Verified & Accepted – PASSED'}
+            </span>
           </div>
 
+          {/* Subtitle / Explanation */}
+          {(combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? (
+            <div style={{
+              fontSize: '0.86rem',
+              color: '#92400E',
+              lineHeight: 1.5,
+              marginBottom: '14px',
+              backgroundColor: '#FEF3C7',
+              padding: '10px 12px',
+              borderRadius: '6px',
+              border: '1px solid #FCD34D'
+            }}>
+              <strong>Intelligent Document Tolerance:</strong> Normal document wear (aged paper, faded printing, minor scratches, or fold marks) has been intelligently handled. Readable fields were extracted and this document is forwarded for human HR/BGV review. <strong>You may continue to the next step.</strong>
+            </div>
+          ) : (
+            <div style={{
+              fontSize: '0.86rem',
+              color: '#065F46',
+              lineHeight: 1.5,
+              marginBottom: '14px'
+            }}>
+              Important identity and residential address details are readable and verified.
+            </div>
+          )}
+
+          {/* Verification Badges */}
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
@@ -1115,33 +1280,33 @@ export function StepAddressProof() {
             padding: '12px 14px',
             backgroundColor: '#FFFFFF',
             borderRadius: 'var(--radius-sm)',
-            border: '1px solid #A7F3D0',
+            border: `1px solid ${(combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? '#FCD34D' : '#A7F3D0'}`,
             marginBottom: '14px'
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#047857', fontWeight: 700, fontSize: '0.88rem' }}>
-              <span style={{ color: '#059669', fontSize: '1.1rem' }}>✓</span>
-              <span>Image Clear</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: (combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? '#B45309' : '#047857', fontWeight: 700, fontSize: '0.88rem' }}>
+              <span style={{ fontSize: '1.1rem' }}>✓</span>
+              <span>{(combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? 'Tolerance Applied' : 'Image Clear'}</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#047857', fontWeight: 700, fontSize: '0.88rem' }}>
-              <span style={{ color: '#059669', fontSize: '1.1rem' }}>✓</span>
-              <span>Text Readable</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: (combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? '#B45309' : '#047857', fontWeight: 700, fontSize: '0.88rem' }}>
+              <span style={{ fontSize: '1.1rem' }}>✓</span>
+              <span>OCR Completed</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#047857', fontWeight: 700, fontSize: '0.88rem' }}>
-              <span style={{ color: '#059669', fontSize: '1.1rem' }}>✓</span>
-              <span>Correct Document Type</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: (combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? '#B45309' : '#047857', fontWeight: 700, fontSize: '0.88rem' }}>
+              <span style={{ fontSize: '1.1rem' }}>✓</span>
+              <span>Document Type: {docType}</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#047857', fontWeight: 700, fontSize: '0.88rem' }}>
-              <span style={{ color: '#059669', fontSize: '1.1rem' }}>✓</span>
-              <span>Front/Back Valid</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: (combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? '#B45309' : '#047857', fontWeight: 700, fontSize: '0.88rem' }}>
+              <span style={{ fontSize: '1.1rem' }}>✓</span>
+              <span>Front & Back Verified</span>
             </div>
           </div>
 
-          {/* Document Name & Address Extraction & Match Preview */}
-          {(combinedValidation.extractedAddress || combinedValidation.extractedName) && (
+          {/* Document Name, Address & PIN Extraction Preview */}
+          {(combinedValidation.extractedAddress || combinedValidation.extractedName || combinedValidation.extractedPincode) && (
             <div style={{
               backgroundColor: '#FFFFFF',
               borderRadius: 'var(--radius-sm)',
-              border: '1px solid #A7F3D0',
+              border: `1px solid ${(combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? '#FCD34D' : '#A7F3D0'}`,
               padding: '12px 14px'
             }}>
               {combinedValidation.extractedName && (
@@ -1149,7 +1314,7 @@ export function StepAddressProof() {
                   <div style={{
                     fontSize: '0.78rem',
                     fontWeight: 700,
-                    color: '#065F46',
+                    color: (combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? '#92400E' : '#065F46',
                     textTransform: 'uppercase',
                     letterSpacing: '0.04em',
                     marginBottom: '4px'
@@ -1177,7 +1342,7 @@ export function StepAddressProof() {
                   <div style={{
                     fontSize: '0.78rem',
                     fontWeight: 700,
-                    color: '#065F46',
+                    color: (combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? '#92400E' : '#065F46',
                     textTransform: 'uppercase',
                     letterSpacing: '0.04em',
                     marginBottom: '4px'
@@ -1200,7 +1365,72 @@ export function StepAddressProof() {
                 </div>
               )}
 
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {combinedValidation.extractedPincode && (
+                <div style={{ marginBottom: '10px' }}>
+                  <div style={{
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    color: (combinedValidation.decision === 'HR/BGV REVIEW REQUIRED' || combinedValidation.requiresManualReview) ? '#92400E' : '#065F46',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                    marginBottom: '4px'
+                  }}>
+                    Extracted PIN Code:
+                  </div>
+                  <div style={{
+                    fontSize: '0.86rem',
+                    fontWeight: 700,
+                    fontFamily: 'monospace',
+                    color: '#0F172A',
+                    display: 'inline-block',
+                    backgroundColor: '#F8FAFC',
+                    padding: '4px 10px',
+                    borderRadius: '4px',
+                    border: '1px solid #E2E8F0'
+                  }}>
+                    {combinedValidation.extractedPincode}
+                  </div>
+                </div>
+              )}
+
+              {/* Uncertain Fields Highlight (if any) */}
+              {combinedValidation.unreadableFields && combinedValidation.unreadableFields.length > 0 && (
+                <div style={{
+                  marginBottom: '10px',
+                  padding: '8px 12px',
+                  backgroundColor: '#FFFBEB',
+                  borderRadius: '4px',
+                  border: '1px dashed #F59E0B',
+                  fontSize: '0.8rem',
+                  color: '#92400E'
+                }}>
+                  <span style={{ fontWeight: 700 }}>🔍 Uncertain fields for HR confirmation: </span>
+                  <span>{combinedValidation.unreadableFields.join(', ')}</span>
+                  <div style={{ fontSize: '0.74rem', color: '#B45309', marginTop: '2px' }}>
+                    HR/BGV reviewers will confirm these fields manually. You are not blocked.
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '6px' }}>
+                {combinedValidation.ocrConfidence !== undefined && (
+                  <div style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    padding: '4px 10px',
+                    borderRadius: '4px',
+                    backgroundColor: combinedValidation.ocrConfidence >= 65 ? '#ECFDF5' : '#FFFBEB',
+                    color: combinedValidation.ocrConfidence >= 65 ? '#047857' : '#B45309',
+                    border: `1px solid ${combinedValidation.ocrConfidence >= 65 ? '#A7F3D0' : '#FCD34D'}`
+                  }}>
+                    <span>OCR Confidence:</span>
+                    <span>{combinedValidation.ocrConfidence}% ({combinedValidation.confidenceLevel || 'NORMAL'})</span>
+                  </div>
+                )}
+
                 {combinedValidation.nameMatch && (
                   <div style={{
                     display: 'inline-flex',
@@ -1245,12 +1475,12 @@ export function StepAddressProof() {
                   fontWeight: 700,
                   padding: '4px 10px',
                   borderRadius: '4px',
-                  backgroundColor: '#ECFDF5',
-                  color: '#047857',
-                  border: '1px solid #A7F3D0'
+                  backgroundColor: combinedValidation.decision === 'ACCEPTED' ? '#ECFDF5' : '#FFFBEB',
+                  color: combinedValidation.decision === 'ACCEPTED' ? '#047857' : '#B45309',
+                  border: `1px solid ${combinedValidation.decision === 'ACCEPTED' ? '#A7F3D0' : '#FCD34D'}`
                 }}>
-                  <span>Overall Result:</span>
-                  <span>{combinedValidation.addressMatch?.overallResult || 'MATCHED'}</span>
+                  <span>Decision:</span>
+                  <span>{combinedValidation.decision || (combinedValidation.requiresManualReview ? 'HR/BGV REVIEW REQUIRED' : 'ACCEPTED')}</span>
                 </div>
 
                 {combinedValidation.languageSummary && combinedValidation.languageSummary !== 'Unknown' && (

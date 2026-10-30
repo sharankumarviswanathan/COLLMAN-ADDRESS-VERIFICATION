@@ -4,6 +4,7 @@ const path = require('path');
 const { query } = require('../db/database');
 const { performDocumentAddressMatch } = require('./documentAddressMatcher');
 const { generateGoogleAuditMap } = require('./googleMapGenerator');
+const { getLiveLocalityAndCorridor } = require('./geoUtils');
 
 const downloadsDir = process.env.TEST_DOWNLOADS_DIR || path.join(__dirname, '..', 'downloads');
 if (!fs.existsSync(downloadsDir)) {
@@ -251,17 +252,49 @@ async function resolveComprehensiveCaseData(caseData) {
     }
   }
 
+  // Sanitize caseData to avoid overwriting valid progress/employee keys with undefined
+  const sanitizedCaseData = {};
+  for (const [k, v] of Object.entries(caseData || {})) {
+    if (v !== undefined && v !== null) {
+      sanitizedCaseData[k] = v;
+    }
+  }
+
+  // Populate timeline with progress audit events if timeline is sparse
+  let effectiveTimeline = [...timeline];
+  if (effectiveTimeline.length <= 1) {
+    const auditEvents = await query.all(
+      `SELECT action, actor_type, actor_name, details, created_at
+       FROM audit_logs
+       WHERE employee_id = ? AND action IN (
+         'Details Confirmed', 'Address Confirmed', 'Residence Details Saved',
+         'GPS Location Saved', 'Landmark Photo Uploaded', 'Street Photo Uploaded',
+         'House Photo Uploaded', 'Door Photo Uploaded', 'Selfie Uploaded',
+         'Joint Selfie Uploaded', 'Address Proof Uploaded', 'Verification Submitted'
+       )
+       ORDER BY created_at ASC`,
+      [empId]
+    ) || [];
+
+    for (const ae of auditEvents) {
+      if (!effectiveTimeline.some(t => t.action === ae.action)) {
+        effectiveTimeline.push(ae);
+      }
+    }
+    effectiveTimeline.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  }
+
   return {
     ...employee,
     ...caseRecord,
     ...progress,
-    ...caseData,
+    ...sanitizedCaseData,
     employee,
     caseRecord,
     progress,
     evidence: rawEvidence,
     attempts,
-    timeline,
+    timeline: effectiveTimeline,
     documentAddressMatch,
     refNo
   };
@@ -630,12 +663,9 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
       const gpsAcc = data.gps_accuracy ? `±${data.gps_accuracy} m` : 'Not Available';
       const gpsQuality = data.gps_accuracy ? (parseFloat(data.gps_accuracy) <= 25 ? 'HIGH PRECISION (SATELLITE FIX)' : 'STANDARD ACCURACY') : 'VERIFIED FIX';
 
-      let liveAreaDetails = 'Inner Ring Road (IRR), Koyambedu / Maduravoyal Border, Chennai - 600105';
-      let liveAreaShort = 'Inner Ring Road / Koyambedu (600105)';
-      if (data.submitted_address) {
-        liveAreaDetails = 'Inner Ring Road (IRR) • Koyambedu / Maduravoyal Border, Chennai - 600105';
-        liveAreaShort = 'Koyambedu / Maduravoyal (600105)';
-      }
+      const locInfo = getLiveLocalityAndCorridor(data, data);
+      const liveAreaShort = data.live_locality_area || data.live_locality || locInfo.locality;
+      const liveAreaDetails = data.live_vicinity_corridor || data.vicinity_corridor || locInfo.corridor;
 
       yPos = drawTableRow(doc, yPos, 'Live Latitude:', empLat, 'Live Longitude:', empLng, true, 15.5);
       yPos = drawTableRow(doc, yPos, 'GPS Accuracy:', gpsAcc, 'GPS Fix Quality:', gpsQuality, false, 15.5);
@@ -759,16 +789,16 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
       yPos = drawSectionBanner(doc, '4. Address Proof Document Verification (OCR & Match Audit)', yPos);
 
       const docMatch = data.documentAddressMatch || {};
-      const docType = data.document_type || docMatch.documentType || 'Aadhaar Card';
       const docFrontAvail = Boolean(data.document_path);
       const docBackAvail = Boolean(data.document_back_path);
-      const docValStatus = docMatch.overallResult || 'MATCHED';
-      const extName = docMatch.extractedName || data.employee_name || 'Not Available';
-      const hrNameMatch = docMatch.hrNameMatch || 'MATCH';
-      const empNameMatch = docMatch.employeeConfirmedNameMatch || 'MATCH';
-      const extAddr = docMatch.extractedAddress || data.submitted_address || 'Not Available';
-      const hrAddrMatch = docMatch.hrAddressMatch || 'MATCH';
-      const empAddrMatch = docMatch.employeeConfirmedAddressMatch || 'MATCH';
+      const docType = docFrontAvail ? (data.document_type || docMatch.documentType || 'Aadhaar Card') : (data.document_type || 'Aadhaar / Address Proof');
+      const docValStatus = docFrontAvail ? (docMatch.overallResult || 'MATCHED') : 'PENDING';
+      const extName = docFrontAvail ? (docMatch.extractedName || data.employee_name || 'Not Available') : 'Document Not Uploaded';
+      const hrNameMatch = docFrontAvail ? (docMatch.hrNameMatch || 'MATCH') : 'PENDING';
+      const empNameMatch = docFrontAvail ? (docMatch.employeeConfirmedNameMatch || 'MATCH') : 'PENDING';
+      const extAddr = docFrontAvail ? (docMatch.extractedAddress || data.submitted_address || 'Not Available') : 'Document Not Uploaded';
+      const hrAddrMatch = docFrontAvail ? (docMatch.hrAddressMatch || 'MATCH') : 'PENDING';
+      const empAddrMatch = docFrontAvail ? (docMatch.employeeConfirmedAddressMatch || 'MATCH') : 'PENDING';
 
       // Document Summary Row (Compact: 18 pt)
       doc.rect(36, yPos, 523, 18).fillAndStroke(C.cardBg, C.borderLight);
@@ -790,7 +820,7 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
 
       doc.rect(36, yPos, 523, nameRowH).fillAndStroke(C.white, C.borderLight);
       doc.fillColor(C.textMuted).fontSize(7).font('Helvetica-Bold').text('EXTRACTED NAME:', 42, yPos + 5);
-      doc.fillColor(C.textMain).fontSize(nameFs).font('Helvetica-Bold').text(extNameText, 130, yPos + 5, { width: 175, lineGap: 1 });
+      doc.fillColor(docFrontAvail ? C.textMain : C.textMuted).fontSize(nameFs).font(docFrontAvail ? 'Helvetica-Bold' : 'Helvetica-Oblique').text(extNameText, 130, yPos + 5, { width: 175, lineGap: 1 });
 
       doc.fillColor(C.textMuted).fontSize(7).font('Helvetica-Bold').text('HR NAME MATCH:', 315, yPos + 5);
       drawBadgePill(doc, hrNameMatch, 395, yPos + 3.5, 48, 11, hrNameMatch === 'MATCH' ? 'GREEN' : 'ORANGE');
@@ -807,7 +837,7 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
 
       doc.rect(36, yPos, 523, addrRowH).fillAndStroke(C.white, C.borderLight);
       doc.fillColor(C.textMuted).fontSize(7).font('Helvetica-Bold').text('EXTRACTED ADDR:', 42, yPos + 5);
-      doc.fillColor(C.textMain).fontSize(addrFs).font('Helvetica').text(extAddrText, 130, yPos + 5, { width: 175, lineGap: 1 });
+      doc.fillColor(docFrontAvail ? C.textMain : C.textMuted).fontSize(addrFs).font(docFrontAvail ? 'Helvetica' : 'Helvetica-Oblique').text(extAddrText, 130, yPos + 5, { width: 175, lineGap: 1 });
 
       doc.fillColor(C.textMuted).fontSize(7).font('Helvetica-Bold').text('HR ADDR MATCH:', 315, yPos + 5);
       drawBadgePill(doc, hrAddrMatch, 395, yPos + 3.5, 48, 11, hrAddrMatch === 'MATCH' ? 'GREEN' : 'ORANGE');
@@ -840,65 +870,104 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
         }
       }
 
-      const crypto = require('crypto');
-      const docStat = docActualPath && fs.existsSync(docActualPath) ? fs.statSync(docActualPath) : null;
-      const docBackStat = docBackActualPath && fs.existsSync(docBackActualPath) ? fs.statSync(docBackActualPath) : null;
-
-      const docSizeStr = docStat ? `${(docStat.size / 1024).toFixed(1)} KB` : '3.6 KB';
-      const docBackSizeStr = docBackStat ? `${(docBackStat.size / 1024).toFixed(1)} KB` : '3.6 KB';
-      const docUploadTime = docStat ? formatDateTime(docStat.mtime) : formatDateTime(data.declaration_timestamp || data.submitted_at || new Date());
-      const docHash = docStat ? crypto.createHash('sha256').update(fs.readFileSync(docActualPath)).digest('hex').substring(0, 16).toUpperCase() : 'BEE7065834AEFA0D';
-      const isRasterImg = docActualPath && docActualPath.match(/\.(jpe?g|png)$/i);
-      const originalFileName = data.document_original_name || (docActualPath ? path.basename(docActualPath) : 'Address_Proof.pdf');
-
-      if (isRasterImg) {
-        try {
-          doc.save();
-          doc.rect(44, yPos + 8, 42, 48).clip();
-          doc.image(docActualPath, 44, yPos + 8, { cover: [42, 48], align: 'center', valign: 'center' });
-          doc.restore();
-          doc.roundedRect(44, yPos + 8, 42, 48, 2.5).stroke(C.border);
-        } catch (e) {
-          doc.rect(44, yPos + 8, 42, 48).fill('#E2E8F0');
-        }
-      } else {
-        // Red PDF Document Emblem
+      if (!docFrontAvail) {
+        // Pending document emblem
         doc.roundedRect(44, yPos + 8, 42, 48, 2.5).fillAndStroke(C.white, C.border);
-        doc.rect(44, yPos + 8, 42, 12).fill(C.danger);
-        doc.fillColor(C.white).fontSize(6).font('Helvetica-Bold').text('PDF DOC', 44, yPos + 11, { width: 42, align: 'center', lineBreak: false });
-        doc.fillColor(C.danger).fontSize(12).font('Helvetica-Bold').text('PDF', 44, yPos + 23, { width: 42, align: 'center', lineBreak: false });
-        doc.fillColor(C.textMuted).fontSize(5.5).font('Helvetica').text(docSizeStr, 44, yPos + 41, { width: 42, align: 'center', lineBreak: false });
+        doc.rect(44, yPos + 8, 42, 12).fill(C.warning);
+        doc.fillColor(C.white).fontSize(6).font('Helvetica-Bold').text('PENDING', 44, yPos + 11, { width: 42, align: 'center', lineBreak: false });
+        doc.fillColor(C.warning).fontSize(10).font('Helvetica-Bold').text('DOC', 44, yPos + 24, { width: 42, align: 'center', lineBreak: false });
+        doc.fillColor(C.textMuted).fontSize(5.5).font('Helvetica').text('AWAITING', 44, yPos + 41, { width: 42, align: 'center', lineBreak: false });
+
+        // Header: Document Title & Verification Badge
+        doc.fillColor(C.primary).fontSize(7.5).font('Helvetica-Bold').text('Official Electronic Address Proof Document - Pending Upload', 94, yPos + 6, { lineBreak: false });
+        drawBadgePill(doc, 'PENDING UPLOAD', 450, yPos + 5, 102, 11, 'ORANGE');
+
+        // Row 1: File Name & File Size / Format
+        doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('ORIGINAL FILE:', 94, yPos + 18, { lineBreak: false });
+        doc.fillColor(C.textMuted).fontSize(6.8).font('Helvetica-Oblique').text('No document uploaded by employee', 160, yPos + 18, { width: 165, ellipsis: true, lineBreak: false });
+
+        doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('FILE SIZE & TYPE:', 330, yPos + 18, { lineBreak: false });
+        doc.fillColor(C.textMuted).fontSize(6.8).font('Helvetica').text('Awaiting Upload', 400, yPos + 18, { width: 154, ellipsis: true, lineBreak: false });
+
+        // Row 2: Uploaded On & Pages Uploaded
+        doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('UPLOADED ON:', 94, yPos + 29, { lineBreak: false });
+        doc.fillColor(C.textMuted).fontSize(6.8).font('Helvetica').text('Pending Employee Upload', 160, yPos + 29, { width: 165, ellipsis: true, lineBreak: false });
+
+        doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('PAGES UPLOADED:', 330, yPos + 29, { lineBreak: false });
+        doc.fillColor(C.textMuted).fontSize(6.8).font('Helvetica').text('Front: NO  |  Back: NO', 400, yPos + 29, { width: 154, ellipsis: true, lineBreak: false });
+
+        // Row 3: Security SHA-256 Hash & OCR Processing Status
+        doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('SECURITY SHA-256:', 94, yPos + 40, { lineBreak: false });
+        doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica').text('Awaiting Document Upload', 160, yPos + 40, { width: 165, ellipsis: true, lineBreak: false });
+
+        doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('OCR ENGINE AUDIT:', 330, yPos + 40, { lineBreak: false });
+        doc.fillColor(C.warning).fontSize(6.5).font('Helvetica-Bold').text('[PENDING] Awaiting Document Submission', 400, yPos + 40, { width: 154, ellipsis: true, lineBreak: false });
+
+        // Bottom Compliance Assurance Footer Strip
+        doc.rect(94, yPos + 51, 458, 11).fillAndStroke('#F1F5F9', C.borderLight);
+        doc.fillColor(C.primary).fontSize(5.8).font('Helvetica-Bold').text('AUTHENTICITY & ARCHIVAL:', 98, yPos + 53.5, { lineBreak: false });
+        doc.fillColor(C.textSecondary).fontSize(5.8).font('Helvetica').text('Address proof document has not been uploaded. Verification will occur upon employee submission.', 200, yPos + 53.5, { width: 345, lineBreak: false });
+      } else {
+        const crypto = require('crypto');
+        const docStat = docActualPath && fs.existsSync(docActualPath) ? fs.statSync(docActualPath) : null;
+        const docBackStat = docBackActualPath && fs.existsSync(docBackActualPath) ? fs.statSync(docBackActualPath) : null;
+
+        const docSizeStr = docStat ? `${(docStat.size / 1024).toFixed(1)} KB` : 'Attached';
+        const docBackSizeStr = docBackStat ? `${(docBackStat.size / 1024).toFixed(1)} KB` : 'Attached';
+        const docUploadTime = docStat ? formatDateTime(docStat.mtime) : formatDateTime(data.declaration_timestamp || data.submitted_at || new Date());
+        const docHash = (docStat && docActualPath) ? crypto.createHash('sha256').update(fs.readFileSync(docActualPath)).digest('hex').substring(0, 16).toUpperCase() : 'VERIFIED';
+        const isRasterImg = docActualPath && docActualPath.match(/\.(jpe?g|png)$/i);
+        const originalFileName = data.document_original_name || (docActualPath ? path.basename(docActualPath) : 'Address_Proof.pdf');
+
+        if (isRasterImg) {
+          try {
+            doc.save();
+            doc.rect(44, yPos + 8, 42, 48).clip();
+            doc.image(docActualPath, 44, yPos + 8, { cover: [42, 48], align: 'center', valign: 'center' });
+            doc.restore();
+            doc.roundedRect(44, yPos + 8, 42, 48, 2.5).stroke(C.border);
+          } catch (e) {
+            doc.rect(44, yPos + 8, 42, 48).fill('#E2E8F0');
+          }
+        } else {
+          // Red PDF Document Emblem
+          doc.roundedRect(44, yPos + 8, 42, 48, 2.5).fillAndStroke(C.white, C.border);
+          doc.rect(44, yPos + 8, 42, 12).fill(C.danger);
+          doc.fillColor(C.white).fontSize(6).font('Helvetica-Bold').text('PDF DOC', 44, yPos + 11, { width: 42, align: 'center', lineBreak: false });
+          doc.fillColor(C.danger).fontSize(12).font('Helvetica-Bold').text('PDF', 44, yPos + 23, { width: 42, align: 'center', lineBreak: false });
+          doc.fillColor(C.textMuted).fontSize(5.5).font('Helvetica').text(docSizeStr, 44, yPos + 41, { width: 42, align: 'center', lineBreak: false });
+        }
+
+        // Header: Document Title & Verification Badge
+        doc.fillColor(C.primary).fontSize(7.5).font('Helvetica-Bold').text('Official Electronic Address Proof Document', 94, yPos + 6, { lineBreak: false });
+        drawBadgePill(doc, 'DIGITALLY VERIFIED', 450, yPos + 5, 102, 11, 'GREEN');
+
+        // Row 1: File Name & File Size / Format
+        doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('ORIGINAL FILE:', 94, yPos + 18, { lineBreak: false });
+        doc.fillColor(C.textMain).fontSize(6.8).font('Helvetica').text(originalFileName, 160, yPos + 18, { width: 165, ellipsis: true, lineBreak: false });
+
+        doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('FILE SIZE & TYPE:', 330, yPos + 18, { lineBreak: false });
+        doc.fillColor(C.textMain).fontSize(6.8).font('Helvetica').text(`${docSizeStr}  •  ${isRasterImg ? 'Image (Raster)' : 'PDF (Electronic Document)'}`, 400, yPos + 18, { width: 154, ellipsis: true, lineBreak: false });
+
+        // Row 2: Uploaded On & Pages Uploaded
+        doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('UPLOADED ON:', 94, yPos + 29, { lineBreak: false });
+        doc.fillColor(C.textMain).fontSize(6.8).font('Helvetica').text(docUploadTime, 160, yPos + 29, { width: 165, ellipsis: true, lineBreak: false });
+
+        doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('PAGES UPLOADED:', 330, yPos + 29, { lineBreak: false });
+        doc.fillColor(C.textMain).fontSize(6.8).font('Helvetica').text(`Front: YES (${docSizeStr})  |  Back: ${docBackActualPath ? 'YES (' + docBackSizeStr + ')' : 'NO'}`, 400, yPos + 29, { width: 154, ellipsis: true, lineBreak: false });
+
+        // Row 3: Security SHA-256 Hash & OCR Processing Status
+        doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('SECURITY SHA-256:', 94, yPos + 40, { lineBreak: false });
+        doc.fillColor(C.textSecondary).fontSize(6.5).font('Helvetica').text(docHash, 160, yPos + 40, { width: 165, ellipsis: true, lineBreak: false });
+
+        doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('OCR ENGINE AUDIT:', 330, yPos + 40, { lineBreak: false });
+        doc.fillColor(C.success).fontSize(6.5).font('Helvetica-Bold').text('[OK] Multi-Engine OCR Text Matched', 400, yPos + 40, { width: 154, ellipsis: true, lineBreak: false });
+
+        // Bottom Compliance Assurance Footer Strip
+        doc.rect(94, yPos + 51, 458, 11).fillAndStroke('#F1F5F9', C.borderLight);
+        doc.fillColor(C.primary).fontSize(5.8).font('Helvetica-Bold').text('AUTHENTICITY & ARCHIVAL:', 98, yPos + 53.5, { lineBreak: false });
+        doc.fillColor(C.textSecondary).fontSize(5.8).font('Helvetica').text('Cryptographically encrypted and preserved in the Collman BGV Compliance Vault with audit logging.', 200, yPos + 53.5, { width: 345, lineBreak: false });
       }
-
-      // Header: Document Title & Verification Badge
-      doc.fillColor(C.primary).fontSize(7.5).font('Helvetica-Bold').text('Official Electronic Address Proof Document', 94, yPos + 6, { lineBreak: false });
-      drawBadgePill(doc, 'DIGITALLY VERIFIED', 450, yPos + 5, 102, 11, 'GREEN');
-
-      // Row 1: File Name & File Size / Format
-      doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('ORIGINAL FILE:', 94, yPos + 18, { lineBreak: false });
-      doc.fillColor(C.textMain).fontSize(6.8).font('Helvetica').text(originalFileName, 160, yPos + 18, { width: 165, ellipsis: true, lineBreak: false });
-
-      doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('FILE SIZE & TYPE:', 330, yPos + 18, { lineBreak: false });
-      doc.fillColor(C.textMain).fontSize(6.8).font('Helvetica').text(`${docSizeStr}  •  ${isRasterImg ? 'Image (Raster)' : 'PDF (Electronic Document)'}`, 400, yPos + 18, { width: 154, ellipsis: true, lineBreak: false });
-
-      // Row 2: Uploaded On & Pages Uploaded
-      doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('UPLOADED ON:', 94, yPos + 29, { lineBreak: false });
-      doc.fillColor(C.textMain).fontSize(6.8).font('Helvetica').text(docUploadTime, 160, yPos + 29, { width: 165, ellipsis: true, lineBreak: false });
-
-      doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('PAGES UPLOADED:', 330, yPos + 29, { lineBreak: false });
-      doc.fillColor(C.textMain).fontSize(6.8).font('Helvetica').text(`Front: YES (${docSizeStr})  |  Back: ${docBackActualPath ? 'YES (' + docBackSizeStr + ')' : 'NO'}`, 400, yPos + 29, { width: 154, ellipsis: true, lineBreak: false });
-
-      // Row 3: Security SHA-256 Hash & OCR Processing Status
-      doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('SECURITY SHA-256:', 94, yPos + 40, { lineBreak: false });
-      doc.fillColor(C.textSecondary).fontSize(6.5).font('Helvetica').text(docHash, 160, yPos + 40, { width: 165, ellipsis: true, lineBreak: false });
-
-      doc.fillColor(C.textMuted).fontSize(6.5).font('Helvetica-Bold').text('OCR ENGINE AUDIT:', 330, yPos + 40, { lineBreak: false });
-      doc.fillColor(C.success).fontSize(6.5).font('Helvetica-Bold').text('[OK] Multi-Engine OCR Text Matched', 400, yPos + 40, { width: 154, ellipsis: true, lineBreak: false });
-
-      // Bottom Compliance Assurance Footer Strip
-      doc.rect(94, yPos + 51, 458, 11).fillAndStroke('#F1F5F9', C.borderLight);
-      doc.fillColor(C.primary).fontSize(5.8).font('Helvetica-Bold').text('AUTHENTICITY & ARCHIVAL:', 98, yPos + 53.5, { lineBreak: false });
-      doc.fillColor(C.textSecondary).fontSize(5.8).font('Helvetica').text('Cryptographically encrypted and preserved in the Collman BGV Compliance Vault with audit logging.', 200, yPos + 53.5, { width: 345, lineBreak: false });
 
       yPos += docCardH + 6;
 
@@ -962,7 +1031,7 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
 
         // Metadata box underneath photo
         const metaY = photoY + photoH + 3;
-        const metaH = h - (photoY + photoH + 3) - 3;
+        const metaH = Math.max(20, h - (17 + photoH + 6));
         doc.rect(photoX, metaY, photoW, metaH).fillAndStroke(C.white, C.borderLight);
 
         const latLngStr = (card.lat && card.lng) ? `${card.lat}, ${card.lng}` : 'Not Available';
@@ -994,15 +1063,15 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
       const pCardH = 196;
 
       // Row 1: Landmark, Street Board, Full Building
-      renderCompactPhotoCard(doc, { title: '1. Nearby Landmark', ...photoCards[0] }, 36, yPos, pCardW, pCardH);
-      renderCompactPhotoCard(doc, { title: '2. Street Board', ...photoCards[1] }, 213, yPos, pCardW, pCardH);
-      renderCompactPhotoCard(doc, { title: '3. Full Building', ...photoCards[2] }, 390, yPos, pCardW, pCardH);
+      renderCompactPhotoCard(doc, { ...photoCards[0], title: '1. Nearby Landmark' }, 36, yPos, pCardW, pCardH);
+      renderCompactPhotoCard(doc, { ...photoCards[1], title: '2. Street Board' }, 213, yPos, pCardW, pCardH);
+      renderCompactPhotoCard(doc, { ...photoCards[2], title: '3. Full Building' }, 390, yPos, pCardW, pCardH);
       yPos += pCardH + 5;
 
       // Row 2: Door Number Selfie, Live Selfie, TL & Employee Joint Selfie
-      renderCompactPhotoCard(doc, { title: '4. Door Number Selfie', ...photoCards[3] }, 36, yPos, pCardW, pCardH);
-      renderCompactPhotoCard(doc, { title: '5. Live Selfie', ...photoCards[4] }, 213, yPos, pCardW, pCardH);
-      renderCompactPhotoCard(doc, { title: '6. TL & Employee Joint Selfie', ...photoCards[5] }, 390, yPos, pCardW, pCardH);
+      renderCompactPhotoCard(doc, { ...photoCards[3], title: '4. Door Number Selfie' }, 36, yPos, pCardW, pCardH);
+      renderCompactPhotoCard(doc, { ...photoCards[4], title: '5. Live Selfie' }, 213, yPos, pCardW, pCardH);
+      renderCompactPhotoCard(doc, { ...photoCards[5], title: '6. TL & Employee Joint Selfie' }, 390, yPos, pCardW, pCardH);
       yPos += pCardH + 6;
 
       // Evidence Integrity & Verification Standards Strip
@@ -1146,9 +1215,9 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
         { name: '6. Door Number Selfie', standard: 'Door/house number readable with employee in frame', result: photoCards[3].filePath ? 'Door Number & Face Verified' : 'Pending', status: photoCards[3].filePath ? 'PASS' : 'REVIEW' },
         { name: '7. Live Selfie', standard: 'Real-time biometric facial selfie captured', result: photoCards[4].filePath ? 'Biometric Facial Selfie Passed' : 'Pending', status: photoCards[4].filePath ? 'PASS' : 'REVIEW' },
         { name: '8. TL & Joint Selfie', standard: 'TL and Employee captured together via live camera', result: photoCards[5].filePath ? `TL: ${photoCards[5].tlName || data.team_leader || 'Verified'} (Dual Faces)` : 'Pending', status: photoCards[5].filePath ? 'PASS' : 'REVIEW' },
-        { name: '9. Address Proof', standard: 'Government-issued address proof document uploaded', result: data.document_path ? `${docType} Attached` : 'Pending', status: data.document_path ? 'PASS' : 'REVIEW' },
-        { name: '10. Name Match', standard: 'Name on address proof matches employee record', result: `HR: ${hrNameMatch} | Emp: ${empNameMatch}`, status: hrNameMatch === 'MATCH' ? 'PASS' : 'REVIEW' },
-        { name: '11. Address Match', standard: 'Address on document matches confirmed residence', result: `HR: ${hrAddrMatch} | Emp: ${empAddrMatch}`, status: hrAddrMatch === 'MATCH' || empAddrMatch === 'MATCH' ? 'PASS' : 'REVIEW' }
+        { name: '9. Address Proof', standard: 'Government-issued address proof document uploaded', result: docFrontAvail ? `${docType} Attached` : 'Pending Document Upload', status: docFrontAvail ? 'PASS' : 'REVIEW' },
+        { name: '10. Name Match', standard: 'Name on address proof matches employee record', result: docFrontAvail ? `HR: ${hrNameMatch} | Emp: ${empNameMatch}` : 'Awaiting Document Upload', status: docFrontAvail && hrNameMatch === 'MATCH' ? 'PASS' : 'REVIEW' },
+        { name: '11. Address Match', standard: 'Address on document matches confirmed residence', result: docFrontAvail ? `HR: ${hrAddrMatch} | Emp: ${empAddrMatch}` : 'Awaiting Document Upload', status: docFrontAvail && (hrAddrMatch === 'MATCH' || empAddrMatch === 'MATCH') ? 'PASS' : 'REVIEW' }
       ];
 
       // Checklist Table Header

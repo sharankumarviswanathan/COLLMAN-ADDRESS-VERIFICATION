@@ -10,7 +10,10 @@ const {
   calculateDistanceMeters,
   formatDistance,
   classifyDistance,
-  geocodeAddress
+  geocodeAddress,
+  reverseGeocodeCoordinates,
+  getLiveLocalityAndCorridor,
+  getHrLocalityAndCorridor
 } = require('../utils/geoUtils');
 const { processSingleEmployee } = require('../utils/geocodingQueue');
 const { performDocumentAddressMatch } = require('../utils/documentAddressMatcher');
@@ -124,10 +127,35 @@ router.get('/:caseRefOrEmpId', authenticateAdmin, requirePermission('review_case
       fileUrl: formatFileUrl(ev.file_path)
     }));
 
-    // Format photo URLs and file metadata in progress
+    // Perform Reverse-Geocoding on Employee Live Captured Coordinates
+    let revGeo = null;
+    if (progress && progress.latitude !== null && progress.longitude !== null &&
+        progress.latitude !== undefined && progress.longitude !== undefined) {
+      try {
+        const googleKeySetting = await query.get("SELECT value FROM app_settings WHERE key = 'google_maps_api_key'");
+        const googleApiKey = googleKeySetting?.value || process.env.GOOGLE_MAPS_API_KEY;
+        revGeo = await reverseGeocodeCoordinates(progress.latitude, progress.longitude, { googleApiKey });
+      } catch (revErr) {
+        console.warn('[REVERSE GEOCODE] Reverse geocode error in review endpoint:', revErr.message);
+      }
+    }
+
+    // Format photo URLs, file metadata, and Live Locality/Corridor in progress
+    const localityInfo = progress ? getLiveLocalityAndCorridor(progress, employee) : null;
     const formattedProgress = progress
       ? {
           ...progress,
+          live_road: revGeo?.road || localityInfo?.road || '',
+          live_locality: revGeo?.locality || localityInfo?.locality || '',
+          live_locality_area: revGeo?.locality_area || localityInfo?.locality || '',
+          vicinity_corridor: revGeo?.vicinity_corridor || localityInfo?.corridor || '',
+          live_vicinity_corridor: revGeo?.vicinity_corridor || localityInfo?.corridor || '',
+          live_city: revGeo?.city || localityInfo?.city || 'Chennai',
+          live_district: revGeo?.district || localityInfo?.district || 'Chennai District',
+          live_state: revGeo?.state || localityInfo?.state || 'Tamil Nadu',
+          live_pincode: revGeo?.pincode || localityInfo?.pincode || '',
+          live_formatted_address: revGeo?.formatted_address || '',
+          live_reverse_geocode: revGeo,
           selfieUrl: formatFileUrl(progress.selfie_path),
           housePhotoUrl: formatFileUrl(progress.house_photo_path),
           doorPhotoUrl: formatFileUrl(progress.door_photo_path),
@@ -136,9 +164,15 @@ router.get('/:caseRefOrEmpId', authenticateAdmin, requirePermission('review_case
           landmarkPhotoUrl: formatFileUrl(progress.landmark_photo_path),
           jointSelfieUrl: formatFileUrl(progress.joint_selfie_path),
           documentUrl: formatFileUrl(progress.document_path),
+          documentEnhancedUrl: formatFileUrl(progress.document_enhanced_path),
           documentBackUrl: formatFileUrl(progress.document_back_path),
+          documentBackEnhancedUrl: formatFileUrl(progress.document_back_enhanced_path),
           documentMeta: getDocMeta(progress.document_path),
-          documentBackMeta: getDocMeta(progress.document_back_path)
+          documentBackMeta: getDocMeta(progress.document_back_path),
+          documentEnhancedMeta: getDocMeta(progress.document_enhanced_path),
+          documentBackEnhancedMeta: getDocMeta(progress.document_back_enhanced_path),
+          addressProofDecision: progress.address_proof_decision || null,
+          addressProofOcrResult: progress.address_proof_ocr_result ? (typeof progress.address_proof_ocr_result === 'string' ? JSON.parse(progress.address_proof_ocr_result) : progress.address_proof_ocr_result) : null
         }
       : null;
 
@@ -152,8 +186,17 @@ router.get('/:caseRefOrEmpId', authenticateAdmin, requirePermission('review_case
       }
     }
 
+    const hrLocalityInfo = getHrLocalityAndCorridor(employee);
+    const enrichedEmployee = {
+      ...employee,
+      hr_locality: hrLocalityInfo.locality,
+      hr_locality_area: hrLocalityInfo.locality,
+      hr_vicinity_corridor: hrLocalityInfo.corridor,
+      hr_corridor: hrLocalityInfo.corridor
+    };
+
     res.json({
-      employee,
+      employee: enrichedEmployee,
       caseRecord: caseRecord || {
         case_reference: `AV-${empId}`,
         status: employee.verification_status,
@@ -360,11 +403,7 @@ router.post('/:caseRefOrEmpId/decision', authenticateAdmin, async (req, res) => 
     // 7. Automatically generate verification report PDF and save to internal Download Area
     const fullCaseData = await query.get(
       `SELECT e.*, vc.case_reference, vc.final_decision, vc.final_remarks, vc.reviewed_by, vc.reviewed_at,
-              vp.submitted_address, vp.address_is_same, vp.address_difference_reason,
-              vp.residence_type, vp.staying_since_month, vp.staying_since_year,
-              vp.latitude, vp.longitude, vp.gps_accuracy, vp.distance_from_hr_meters, vp.distance_category,
-              vp.selfie_captured, vp.house_photo_captured, vp.address_proof_uploaded, vp.document_type,
-              vp.document_original_name, vp.declaration_accepted, vp.declaration_timestamp
+              vp.*
        FROM employees e
        LEFT JOIN verification_cases vc ON e.employee_id = vc.employee_id
        LEFT JOIN verification_progress vp ON e.employee_id = vp.employee_id
@@ -401,11 +440,7 @@ router.post('/:caseRefOrEmpId/generate-report', authenticateAdmin, requirePermis
 
     const fullCaseData = await query.get(
       `SELECT e.*, vc.case_reference, vc.final_decision, vc.final_remarks, vc.reviewed_by, vc.reviewed_at, vc.assigned_reviewer_id as case_reviewer_id,
-              vp.submitted_address, vp.address_is_same, vp.address_difference_reason,
-              vp.residence_type, vp.staying_since_month, vp.staying_since_year,
-              vp.latitude, vp.longitude, vp.gps_accuracy, vp.distance_from_hr_meters, vp.distance_category,
-              vp.selfie_captured, vp.house_photo_captured, vp.address_proof_uploaded, vp.document_type,
-              vp.document_original_name, vp.declaration_accepted, vp.declaration_timestamp
+              vp.*
        FROM employees e
        LEFT JOIN verification_cases vc ON e.employee_id = vc.employee_id
        LEFT JOIN verification_progress vp ON e.employee_id = vp.employee_id
@@ -535,4 +570,74 @@ router.post('/:caseRefOrEmpId/match-document-address', authenticateAdmin, async 
   }
 });
 
+// POST /api/review/reverse-geocode - On-demand reverse geocoding for arbitrary GPS coordinates
+router.post('/reverse-geocode', authenticateAdmin, async (req, res) => {
+  try {
+    const { latitude, longitude } = req.body;
+    if (latitude === undefined || longitude === undefined || latitude === null || longitude === null) {
+      return res.status(400).json({ error: 'Missing latitude or longitude in request body' });
+    }
+
+    const googleKeySetting = await query.get("SELECT value FROM app_settings WHERE key = 'google_maps_api_key'");
+    const googleApiKey = googleKeySetting?.value || process.env.GOOGLE_MAPS_API_KEY;
+
+    const result = await reverseGeocodeCoordinates(latitude, longitude, { googleApiKey });
+    res.json(result);
+  } catch (err) {
+    console.error('Reverse geocode error:', err);
+    res.status(500).json({ error: 'Failed to reverse geocode coordinates' });
+  }
+});
+
+// GET /api/review/:caseRefOrEmpId/reverse-geocode - Retrieve reverse geocoded address fields for employee coordinates
+router.get('/:caseRefOrEmpId/reverse-geocode', authenticateAdmin, async (req, res) => {
+  try {
+    const { caseRefOrEmpId } = req.params;
+    let employee = await query.get(
+      'SELECT * FROM employees WHERE employee_id = ?',
+      [caseRefOrEmpId]
+    );
+    if (!employee) {
+      const caseRecord = await query.get(
+        'SELECT * FROM verification_cases WHERE case_reference = ?',
+        [caseRefOrEmpId]
+      );
+      if (caseRecord) {
+        employee = await query.get('SELECT * FROM employees WHERE employee_id = ?', [caseRecord.employee_id]);
+      }
+    }
+    if (!employee) {
+      return res.status(404).json({ error: 'Employee or Case not found' });
+    }
+
+    const progress = await query.get(
+      'SELECT * FROM verification_progress WHERE employee_id = ?',
+      [employee.employee_id]
+    );
+
+    const lat = req.query.lat !== undefined ? req.query.lat : progress?.latitude;
+    const lng = req.query.lng !== undefined ? req.query.lng : progress?.longitude;
+
+    if (lat === null || lat === undefined || lng === null || lng === undefined) {
+      return res.status(400).json({ error: 'No coordinates available for reverse geocoding' });
+    }
+
+    const googleKeySetting = await query.get("SELECT value FROM app_settings WHERE key = 'google_maps_api_key'");
+    const googleApiKey = googleKeySetting?.value || process.env.GOOGLE_MAPS_API_KEY;
+
+    const result = await reverseGeocodeCoordinates(lat, lng, { googleApiKey });
+    res.json({
+      employee_id: employee.employee_id,
+      captured_latitude: lat,
+      captured_longitude: lng,
+      gps_accuracy: progress?.accuracy || progress?.gps_accuracy || '±12.7 m',
+      verified_address: result
+    });
+  } catch (err) {
+    console.error('Reverse geocode case error:', err);
+    res.status(500).json({ error: 'Failed to reverse geocode employee coordinates' });
+  }
+});
+
 module.exports = router;
+

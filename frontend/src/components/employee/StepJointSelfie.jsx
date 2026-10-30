@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import { capturePhotoLocation } from '../../lib/photoLocation';
 import { validatePhotoWithAi } from '../../lib/imageValidator';
 import { getCameraStream, stopMediaStream } from '../../lib/cameraHelper';
+import { normalizeCapturedImage, computeImageSignature } from '../../lib/imageNormalizer';
 import { ImageValidationFeedback } from './ImageValidationFeedback';
 import {
   Camera,
@@ -58,6 +59,7 @@ export function StepJointSelfie() {
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const isCapturingRef = useRef(false);
 
   // Load team leaders on mount
   useEffect(() => {
@@ -94,10 +96,10 @@ export function StepJointSelfie() {
     };
   }, []);
 
-  // When preview image exists and has not been validated yet, analyze
+  // When preview image exists and has not been validated yet, analyze (unless snapshot is in-flight)
   useEffect(() => {
     let isMounted = true;
-    if (previewImg && !validationResult && !validating && !cameraActive) {
+    if (previewImg && !validationResult && !validating && !cameraActive && !isCapturingRef.current) {
       setValidating(true);
       setErrorMsg('');
       validatePhotoWithAi(previewImg, 'joint_selfie')
@@ -196,38 +198,31 @@ export function StepJointSelfie() {
 
   async function takeSnapshot() {
     if (!videoRef.current) return;
-
     const video = videoRef.current;
-    const width = video.videoWidth || 640;
-    const height = video.videoHeight || 480;
 
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-
-    // Flip horizontally if front-facing user camera for natural mirror selfie
-    if (facingMode === 'user') {
-      ctx.translate(canvas.width, 0);
-      ctx.scale(-1, 1);
-    }
-
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
-
-    stopCamera();
-    setPreviewImg(dataUrl);
+    isCapturingRef.current = true;
+    setValidating(true);
     setValidationResult(null);
     setErrorMsg('');
 
-    // 1. Capture live GPS fix at exact moment photo is snapped
-    const loc = await capturePhotoLocation();
-    setPhotoCoords(loc);
-
-    // 2. Perform automated validation on snapshot
-    setValidating(true);
     try {
-      const val = await validatePhotoWithAi(dataUrl, 'joint_selfie');
+      // 1. Capture live GPS fix at exact moment photo is snapped
+      const loc = await capturePhotoLocation();
+      setPhotoCoords(loc);
+
+      // 2. Normalize orientation, aspect ratio, mirroring, and EXIF
+      const normalized = await normalizeCapturedImage(video, {
+        facingMode,
+        photoType: 'joint_selfie',
+        maxDimension: 1280,
+        quality: 0.90
+      });
+
+      stopCamera();
+      setPreviewImg(normalized.dataUrl);
+
+      // 3. Perform automated quality & content validation on the exact normalized image
+      const val = await validatePhotoWithAi(normalized.dataUrl, 'joint_selfie');
       const safeVal = val && typeof val === 'object' ? val : {
         valid: false,
         error: 'Unable to analyze photo. Please retake the photo.',
@@ -238,12 +233,15 @@ export function StepJointSelfie() {
           content: { passed: false, message: 'Check failed' }
         }
       };
+
+      // Lock validation result specifically to this normalized image signature
+      safeVal.imageSignature = normalized.imageSignature;
       setValidationResult(safeVal);
       if (!safeVal.valid) {
         setErrorMsg(safeVal.error || 'TL & Employee Joint Selfie validation failed. Both faces must be clearly visible.');
       }
     } catch (vErr) {
-      console.warn('Validation error:', vErr);
+      console.warn('Snapshot normalization or validation error:', vErr);
       const failVal = {
         valid: false,
         error: 'Unable to analyze photo. Please retake the photo.',
@@ -258,6 +256,7 @@ export function StepJointSelfie() {
       setErrorMsg('Unable to analyze photo. Please retake the photo.');
     } finally {
       setValidating(false);
+      isCapturingRef.current = false;
     }
   }
 
@@ -294,6 +293,8 @@ export function StepJointSelfie() {
       return;
     }
 
+    const currentSignature = validationResult.imageSignature || computeImageSignature(previewImg);
+
     setLoading(true);
     setErrorMsg('');
 
@@ -302,7 +303,8 @@ export function StepJointSelfie() {
         ...(photoCoords || {}),
         tlId: effectiveTlId,
         tlName: effectiveTlName,
-        clientMetrics: validationResult?.metrics || {}
+        imageSignature: currentSignature,
+        clientMetrics: validationResult.metrics || {}
       });
 
       updateProgress({
@@ -320,18 +322,19 @@ export function StepJointSelfie() {
       nextStep();
     } catch (err) {
       console.error('Joint selfie save error:', err);
+      const serverChecks = err.data?.checks || err.checks;
       const failReport = {
         valid: false,
-        error: err.message || 'Failed to save joint selfie. Please retake the photo.',
-        checks: {
-          clarity: { passed: false, message: 'Save failed' },
-          lighting: { passed: false, message: 'Save failed' },
-          visibility: { passed: false, message: 'Save failed' },
-          content: { passed: false, message: err.message || 'Validation error' }
+        error: err.data?.error || err.message || 'Failed to save joint selfie. Please retake the photo.',
+        checks: serverChecks || {
+          clarity: validationResult?.checks?.clarity || { passed: true, message: 'Verified' },
+          lighting: validationResult?.checks?.lighting || { passed: true, message: 'Verified' },
+          visibility: validationResult?.checks?.visibility || { passed: true, message: 'Verified' },
+          content: { passed: false, message: err.data?.error || err.message || 'Validation error' }
         }
       };
       setValidationResult(failReport);
-      setErrorMsg(err.message || 'Failed to save joint selfie. Please retake the photo.');
+      setErrorMsg(failReport.error);
     } finally {
       setLoading(false);
     }

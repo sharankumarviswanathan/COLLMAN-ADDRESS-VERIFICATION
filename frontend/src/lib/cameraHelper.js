@@ -5,25 +5,28 @@
 
 export async function getCameraStream(facingMode = 'environment') {
   const preferredMode = facingMode === 'user' ? 'user' : 'environment';
+  const isPortrait = typeof window !== 'undefined' && window.innerHeight > window.innerWidth;
+  const idealWidth = isPortrait ? 720 : 1280;
+  const idealHeight = isPortrait ? 1280 : 720;
 
-  // Attempt 1: Exact facingMode with ideal 720p HD resolution
+  // Attempt 1: Exact facingMode with orientation-aware resolution
   try {
     return await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { exact: preferredMode },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
+        width: { ideal: idealWidth },
+        height: { ideal: idealHeight }
       },
       audio: false
     });
   } catch (err1) {
-    // Attempt 2: Ideal facingMode with 720p HD
+    // Attempt 2: Ideal facingMode with orientation-aware resolution
     try {
       return await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: preferredMode },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
+          width: { ideal: idealWidth },
+          height: { ideal: idealHeight }
         },
         audio: false
       });
@@ -50,8 +53,8 @@ export async function getCameraStream(facingMode = 'environment') {
               return await navigator.mediaDevices.getUserMedia({
                 video: {
                   deviceId: { exact: targetDevice.deviceId },
-                  width: { ideal: 1280 },
-                  height: { ideal: 720 }
+                  width: { ideal: idealWidth },
+                  height: { ideal: idealHeight }
                 },
                 audio: false
               });

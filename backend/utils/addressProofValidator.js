@@ -6,8 +6,16 @@ const {
   detectDocumentLanguage,
   normalizeIndicNumerals
 } = require('./indianLanguageOcr');
-const { extractTextFromPdfBuffer } = require('./documentAddressMatcher');
-const { compareAddressComponents } = require('./documentAddressMatcher');
+const {
+  extractTextFromPdfBuffer,
+  compareAddressComponents,
+  extractAddressFromText,
+  extractNameFromText,
+  compareNameComponents,
+  extractPincode,
+  extractHouseNumber
+} = require('./documentAddressMatcher');
+const { preprocessDocumentImage } = require('./documentPreprocessor');
 
 /**
  * Supported Document Types
@@ -464,7 +472,9 @@ function maskAadhaarNumbers(text) {
 }
 
 /**
- * Simple image brightness / contrast / blur inspection from Buffer
+ * Intelligent Image Quality Inspection for Address Proof Documents
+ * Tolerates normal document conditions (old, slightly scratched, faded, folded, minor wear)
+ * Only rejects if severely damaged, completely unreadable (< 8 blur), pitch black (< 12), or totally washed out (> 248).
  */
 function inspectImageQuality(imageBuffer, clientMetrics = {}) {
   const {
@@ -477,32 +487,59 @@ function inspectImageQuality(imageBuffer, clientMetrics = {}) {
     isClear: true,
     hasGoodLighting: true,
     hasGoodContrast: true,
+    isSeverelyDamagedOrUnreadable: false,
+    needsManualReview: false,
+    wearDetected: [],
     error: null,
     score: 85
   };
 
-  if (blurScore !== null && blurScore !== undefined && blurScore < 20) {
-    quality.isClear = false;
-    quality.error = 'Image is not clear. Please retake or replace the document.';
-    quality.score -= 40;
-  }
-
-  if (brightness !== null && brightness !== undefined) {
-    if (brightness < 30) {
-      quality.hasGoodLighting = false;
-      quality.error = 'Image is too dark. Please ensure sufficient lighting and retake.';
-      quality.score -= 30;
-    } else if (brightness > 245) {
-      quality.hasGoodLighting = false;
-      quality.error = 'Image is overexposed or washed out. Please retake the document.';
-      quality.score -= 30;
+  // 1. Extreme Blur check: only reject if blurScore < 8 (completely illegible smudge / noise)
+  if (blurScore !== null && blurScore !== undefined) {
+    if (blurScore < 8) {
+      quality.isClear = false;
+      quality.isSeverelyDamagedOrUnreadable = true;
+      quality.error = 'Image is extremely blurred. Please hold your camera steady and provide a clearer document image.';
+      quality.score -= 50;
+    } else if (blurScore < 20) {
+      // Normal wear / slight blur / scratched document: tolerable, routes to HR/BGV review instead of hard reject
+      quality.needsManualReview = true;
+      quality.wearDetected.push('Minor surface scratches / fold blur');
+      quality.score -= 20;
     }
   }
 
-  if (contrast !== null && contrast !== undefined && contrast < 12) {
-    quality.hasGoodContrast = false;
-    quality.error = quality.error || 'Image has poor contrast. Text is not clearly visible.';
-    quality.score -= 20;
+  // 2. Lighting tolerance: only reject if pitch black (< 12) or totally blown out / solid white (> 248)
+  if (brightness !== null && brightness !== undefined) {
+    if (brightness < 12) {
+      quality.hasGoodLighting = false;
+      quality.isSeverelyDamagedOrUnreadable = true;
+      quality.error = 'Image is too dark to read document details. Please ensure sufficient lighting and retake.';
+      quality.score -= 50;
+    } else if (brightness > 248) {
+      quality.hasGoodLighting = false;
+      quality.isSeverelyDamagedOrUnreadable = true;
+      quality.error = 'Image is completely overexposed or washed out. Please retake the document.';
+      quality.score -= 50;
+    } else if (brightness < 32 || brightness > 235) {
+      quality.needsManualReview = true;
+      quality.wearDetected.push('Aged paper / uneven lighting');
+      quality.score -= 15;
+    }
+  }
+
+  // 3. Contrast tolerance: only reject if completely flat solid color (< 6)
+  if (contrast !== null && contrast !== undefined) {
+    if (contrast < 6) {
+      quality.hasGoodContrast = false;
+      quality.isSeverelyDamagedOrUnreadable = true;
+      quality.error = 'Image has insufficient contrast. Text is not discernable.';
+      quality.score -= 40;
+    } else if (contrast < 14) {
+      quality.needsManualReview = true;
+      quality.wearDetected.push('Faded print / low contrast');
+      quality.score -= 10;
+    }
   }
 
   return quality;
@@ -510,6 +547,8 @@ function inspectImageQuality(imageBuffer, clientMetrics = {}) {
 
 /**
  * Extract text from document Buffer / file (PDF or Image)
+ * Intelligently applies preprocessing (contrast, sharpening, resizing) before OCR
+ * Returns rich result with text, confidence, words, and enhanced image buffers
  */
 async function extractDocumentText(filePathOrBuffer, mimeType = 'application/pdf') {
   let buffer = null;
@@ -528,7 +567,17 @@ async function extractDocumentText(filePathOrBuffer, mimeType = 'application/pdf
     buffer = filePathOrBuffer;
   }
 
-  if (!buffer || buffer.length === 0) return '';
+  const resultObj = {
+    text: '',
+    confidence: 0,
+    words: [],
+    enhancedBuffer: null,
+    originalBuffer: buffer,
+    appliedSteps: [],
+    toString() { return this.text; }
+  };
+
+  if (!buffer || buffer.length === 0) return resultObj;
 
   // 1. If PDF (by extension, mime, or magic bytes %PDF-), parse text stream
   const isPdf = ext === '.pdf' || mimeType === 'application/pdf' || buffer.slice(0, 5).toString() === '%PDF-';
@@ -536,29 +585,62 @@ async function extractDocumentText(filePathOrBuffer, mimeType = 'application/pdf
     try {
       const pdfText = extractTextFromPdfBuffer(buffer);
       if (pdfText && pdfText.trim().length >= 10) {
-        return pdfText;
+        resultObj.text = pdfText;
+        resultObj.confidence = 92;
+        return resultObj;
       }
     } catch (e) {
       console.warn('PDF stream extract error in validator:', e.message);
     }
-    // PDF files cannot be processed directly by Tesseract pixReadStream without rasterization
-    return '';
+    return resultObj;
   }
 
-  // 2. OCR using Tesseract with all 6 Indian languages (for image buffers)
+  // 2. Preprocess document image before OCR (adaptive contrast, sharpening, resizing)
+  let enhancedBuffer = buffer;
+  let appliedSteps = [];
+  try {
+    const prep = await preprocessDocumentImage(buffer);
+    if (prep && prep.enhancedBuffer && prep.enhancedBuffer.length > 0) {
+      enhancedBuffer = prep.enhancedBuffer;
+      appliedSteps = prep.appliedSteps || [];
+    }
+  } catch (prepErr) {
+    console.warn('Document preprocessing notice:', prepErr.message);
+  }
+  resultObj.enhancedBuffer = enhancedBuffer;
+  resultObj.appliedSteps = appliedSteps;
+
+  // 3. OCR using Tesseract with all 6 Indian languages
   try {
     const worker = await getIndianLanguageWorker();
     if (worker) {
-      const ret = await worker.recognize(buffer);
-      if (ret && ret.data && ret.data.text) {
-        return ret.data.text;
+      const ret = await worker.recognize(enhancedBuffer);
+      let text = ret?.data?.text || '';
+      let confidence = typeof ret?.data?.confidence === 'number' ? Math.round(ret.data.confidence) : 0;
+      let words = Array.isArray(ret?.data?.words) ? ret.data.words.map(w => ({ text: w.text, confidence: Math.round(w.confidence) })) : [];
+
+      // If text extraction yielded low confidence on enhanced, also try original as fallback
+      if ((!text || text.trim().length < 15 || confidence < 35) && enhancedBuffer !== buffer) {
+        try {
+          const retOrig = await worker.recognize(buffer);
+          if (retOrig?.data?.text && retOrig.data.text.trim().length > text.trim().length) {
+            text = retOrig.data.text;
+            confidence = typeof retOrig.data.confidence === 'number' ? Math.round(retOrig.data.confidence) : confidence;
+            words = Array.isArray(retOrig.data.words) ? retOrig.data.words.map(w => ({ text: w.text, confidence: Math.round(w.confidence) })) : words;
+          }
+        } catch (origErr) {}
       }
+
+      resultObj.text = text;
+      resultObj.confidence = confidence;
+      resultObj.words = words;
+      return resultObj;
     }
   } catch (ocrErr) {
     console.warn('Indian-language OCR error:', ocrErr.message);
   }
 
-  return '';
+  return resultObj;
 }
 
 /**
@@ -698,6 +780,7 @@ async function validateAddressProofDocument({
 }) {
   const result = {
     valid: false,
+    decision: 'REJECTED', // 'ACCEPTED' | 'HR/BGV REVIEW REQUIRED' | 'REJECTED'
     qualityPassed: false,
     typeMatchPassed: false,
     sideValidPassed: false,
@@ -714,6 +797,14 @@ async function validateAddressProofDocument({
     maskedId: null,
     extractedName: '',
     extractedAddress: '',
+    extractedPincode: '',
+    ocrConfidence: 0,
+    confidenceLevel: 'LOW',
+    unreadableFields: [],
+    frontOriginalBuffer: null,
+    frontEnhancedBuffer: null,
+    backOriginalBuffer: null,
+    backEnhancedBuffer: null,
     languageDetection: null,
     detectedLanguages: [],
     isMixedLanguage: false,
@@ -741,29 +832,32 @@ async function validateAddressProofDocument({
 
   // 1. Analyze FRONT side if provided
   let extractedFrontText = frontText || '';
+  let frontQuality = null;
+  let frontOcr = null;
+
   if ((frontFileOrBuffer || frontMetrics?.blurScore !== undefined || extractedFrontText) && (validateSide === 'front' || validateSide === 'both')) {
-    const frontQuality = inspectImageQuality(frontFileOrBuffer, frontMetrics);
-    if (!frontQuality.isClear) {
-      result.error = 'Image is not clear. Please retake or replace the document.';
-      result.details = 'Front image appears blurry or out of focus. Sent for HR/BGV review.';
-      result.reason = 'QUALITY_FAILED';
-      result.requiresManualReview = true;
-      result.overallResult = 'REVIEW REQUIRED';
-      result.statusMessage = 'IMAGE BLURRED – REVIEW REQUIRED';
-      return result;
-    }
-    if (!frontQuality.hasGoodLighting) {
-      result.error = frontQuality.error || 'Image lighting is poor. Please retake with sufficient light.';
-      result.reason = 'QUALITY_FAILED';
-      result.requiresManualReview = true;
-      result.overallResult = 'REVIEW REQUIRED';
-      result.statusMessage = 'POOR LIGHTING – REVIEW REQUIRED';
+    frontQuality = inspectImageQuality(frontFileOrBuffer, frontMetrics);
+
+    // Only reject if severely damaged / unreadable (< 8 blur, < 12 dark, > 248 blown out)
+    if (frontQuality.isSeverelyDamagedOrUnreadable) {
+      result.valid = false;
+      result.decision = 'REJECTED';
+      result.overallResult = 'REJECTED';
+      result.reason = 'SEVERELY_DAMAGED_OR_UNREADABLE';
+      result.error = frontQuality.error || 'Front document image is severely blurred or dark. Please retake or provide a clearer image.';
+      result.details = 'Front document fails minimum visibility threshold. Requesting clearer image.';
+      result.statusMessage = 'DOCUMENT REJECTED – PLEASE RETAKE OR UPLOAD CLEARER IMAGE';
+      result.requiresManualReview = false;
       return result;
     }
 
     if (!extractedFrontText && frontFileOrBuffer) {
-      extractedFrontText = await extractDocumentText(frontFileOrBuffer);
+      frontOcr = await extractDocumentText(frontFileOrBuffer);
+      extractedFrontText = frontOcr.text || '';
+      result.frontOriginalBuffer = frontOcr.originalBuffer;
+      result.frontEnhancedBuffer = frontOcr.enhancedBuffer;
     }
+
     const frontDetect = detectDocumentTypeFromText(extractedFrontText);
     const frontSideDetect = detectDocumentSide(extractedFrontText, selectedDocumentType);
 
@@ -771,72 +865,52 @@ async function validateAddressProofDocument({
       textLength: extractedFrontText.length,
       detectedType: frontDetect.detectedType,
       confidence: frontDetect.confidence,
+      ocrConfidence: frontOcr?.confidence || 0,
       detectedSide: frontSideDetect.side,
       quality: frontQuality
     };
 
-    // Check if text could be read clearly
-    if (!extractedFrontText || extractedFrontText.trim().length < 10) {
-      result.error = 'Document text could not be clearly read. Flagged for HR/BGV manual review.';
-      result.details = 'OCR was unable to extract legible text from Front side. Sent to HR/BGV review queue.';
-      result.reason = 'UNREADABLE_TEXT';
-      result.requiresManualReview = true;
-      result.overallResult = 'REVIEW REQUIRED';
-      result.statusMessage = 'ADDRESS COULD NOT BE READ – REVIEW REQUIRED';
-      return result;
-    }
-
-    // Check Document Type Mismatch for Front
-    if (frontDetect.detectedType && frontDetect.detectedType !== selectedDocumentType) {
-      result.error = `Uploaded document appears to be an ${frontDetect.detectedType}. Please select ${frontDetect.detectedType} from the Document Type dropdown or upload a valid ${selectedDocumentType}.`;
-      result.details = `Front side matched ${frontDetect.detectedType} instead of ${selectedDocumentType}.`;
+    // Document Type Mismatch check (high confidence mismatch only)
+    if (frontDetect.detectedType && frontDetect.detectedType !== selectedDocumentType && frontDetect.confidence >= 45) {
+      result.valid = false;
+      result.decision = 'REJECTED';
+      result.overallResult = 'REJECTED';
       result.reason = 'TYPE_MISMATCH';
+      result.error = `Uploaded document appears to be a ${frontDetect.detectedType}. Please select ${frontDetect.detectedType} from the Document Type dropdown or upload a valid ${selectedDocumentType}.`;
+      result.details = `Front side matched ${frontDetect.detectedType} instead of ${selectedDocumentType}.`;
+      result.statusMessage = `DOCUMENT TYPE MISMATCH (${frontDetect.detectedType})`;
       return result;
-    }
-
-    // Check if completely unrelated photo / non-document
-    const frontMatchesSelected = (frontDetect.scores[selectedDocumentType] || 0) > 0;
-    if (!frontDetect.detectedType && !frontMatchesSelected && frontSideDetect.side === 'unknown') {
-      result.error = `This does not appear to be a valid ${selectedDocumentType}. Flagged for HR/BGV review.`;
-      result.details = 'Front image does not contain recognizable identity/utility document text.';
-      result.reason = 'DOCUMENT_TYPE_NOT_DETECTED';
-      result.requiresManualReview = true;
-      result.overallResult = 'REVIEW REQUIRED';
-      result.statusMessage = 'DOCUMENT TYPE UNCLEAR – REVIEW REQUIRED';
-      return result;
-    }
-
-    // Front orientation check
-    if (frontSideDetect.side === 'back') {
-      result.details = 'Notice: Front slot appears to contain Back side details. Please verify orientation.';
     }
   }
 
   // 2. Analyze BACK side if provided
   let extractedBackText = backText || '';
+  let backQuality = null;
+  let backOcr = null;
+
   if ((backFileOrBuffer || backMetrics?.blurScore !== undefined || extractedBackText) && (validateSide === 'back' || validateSide === 'both')) {
-    const backQuality = inspectImageQuality(backFileOrBuffer, backMetrics);
-    if (!backQuality.isClear) {
-      result.error = 'Image is not clear. Please retake or replace the document.';
-      result.details = 'Back image appears blurry or out of focus. Sent for HR/BGV review.';
-      result.reason = 'QUALITY_FAILED';
-      result.requiresManualReview = true;
-      result.overallResult = 'REVIEW REQUIRED';
-      result.statusMessage = 'IMAGE BLURRED – REVIEW REQUIRED';
-      return result;
-    }
-    if (!backQuality.hasGoodLighting) {
-      result.error = backQuality.error || 'Image lighting is poor. Please retake with sufficient light.';
-      result.reason = 'QUALITY_FAILED';
-      result.requiresManualReview = true;
-      result.overallResult = 'REVIEW REQUIRED';
-      result.statusMessage = 'POOR LIGHTING – REVIEW REQUIRED';
+    backQuality = inspectImageQuality(backFileOrBuffer, backMetrics);
+
+    // Only reject if severely damaged / unreadable
+    if (backQuality.isSeverelyDamagedOrUnreadable) {
+      result.valid = false;
+      result.decision = 'REJECTED';
+      result.overallResult = 'REJECTED';
+      result.reason = 'SEVERELY_DAMAGED_OR_UNREADABLE';
+      result.error = backQuality.error || 'Back document image is severely blurred or dark. Please retake or provide a clearer image.';
+      result.details = 'Back document fails minimum visibility threshold. Requesting clearer image.';
+      result.statusMessage = 'DOCUMENT REJECTED – PLEASE RETAKE OR UPLOAD CLEARER IMAGE';
+      result.requiresManualReview = false;
       return result;
     }
 
     if (!extractedBackText && backFileOrBuffer) {
-      extractedBackText = await extractDocumentText(backFileOrBuffer);
+      backOcr = await extractDocumentText(backFileOrBuffer);
+      extractedBackText = backOcr.text || '';
+      result.backOriginalBuffer = backOcr.originalBuffer;
+      result.backEnhancedBuffer = backOcr.enhancedBuffer;
     }
+
     const backDetect = detectDocumentTypeFromText(extractedBackText);
     const backSideDetect = detectDocumentSide(extractedBackText, selectedDocumentType);
 
@@ -844,76 +918,49 @@ async function validateAddressProofDocument({
       textLength: extractedBackText.length,
       detectedType: backDetect.detectedType,
       confidence: backDetect.confidence,
+      ocrConfidence: backOcr?.confidence || 0,
       detectedSide: backSideDetect.side,
       quality: backQuality
     };
 
-    // Check if text could be read
-    if (!extractedBackText || extractedBackText.trim().length < 10) {
-      result.error = 'Document text could not be clearly read. Flagged for HR/BGV manual review.';
-      result.details = 'OCR was unable to extract legible text from Back side. Sent to HR/BGV review queue.';
-      result.reason = 'UNREADABLE_TEXT';
-      result.requiresManualReview = true;
-      result.overallResult = 'REVIEW REQUIRED';
-      result.statusMessage = 'ADDRESS COULD NOT BE READ – REVIEW REQUIRED';
-      return result;
-    }
-
-    // Check Document Type Mismatch for Back
-    if (backDetect.detectedType && backDetect.detectedType !== selectedDocumentType) {
-      result.error = `Uploaded document appears to be an ${backDetect.detectedType}. Please select ${backDetect.detectedType} from the Document Type dropdown or upload a valid ${selectedDocumentType}.`;
-      result.details = `Back side matched ${backDetect.detectedType} instead of ${selectedDocumentType}.`;
+    // Document Type Mismatch check
+    if (backDetect.detectedType && backDetect.detectedType !== selectedDocumentType && backDetect.confidence >= 45) {
+      result.valid = false;
+      result.decision = 'REJECTED';
+      result.overallResult = 'REJECTED';
       result.reason = 'TYPE_MISMATCH';
-      return result;
-    }
-
-    // Check if completely unrelated photo
-    const backMatchesSelected = (backDetect.scores[selectedDocumentType] || 0) > 0;
-    if (!backDetect.detectedType && !backMatchesSelected && backSideDetect.side === 'unknown') {
-      result.error = `This does not appear to be a valid ${selectedDocumentType}. Flagged for HR/BGV review.`;
-      result.details = 'Back image does not contain recognizable identity/utility document text.';
-      result.reason = 'DOCUMENT_TYPE_NOT_DETECTED';
-      result.requiresManualReview = true;
-      result.overallResult = 'REVIEW REQUIRED';
-      result.statusMessage = 'DOCUMENT TYPE UNCLEAR – REVIEW REQUIRED';
+      result.error = `Uploaded document appears to be a ${backDetect.detectedType}. Please select ${backDetect.detectedType} from the Document Type dropdown or upload a valid ${selectedDocumentType}.`;
+      result.details = `Back side matched ${backDetect.detectedType} instead of ${selectedDocumentType}.`;
+      result.statusMessage = `DOCUMENT TYPE MISMATCH (${backDetect.detectedType})`;
       return result;
     }
   }
 
-  // 3. Combined Front & Back Consistency Check (when both are validated)
+  // 3. Combined Front & Back Consistency Check (when both sides are checked)
   const hasFront = Boolean(frontFileOrBuffer || extractedFrontText);
   const hasBack = Boolean(backFileOrBuffer || extractedBackText);
 
-  if (validateSide === 'both' || (hasFront && hasBack)) {
-    if (!hasFront || !hasBack) {
-      result.error = 'Both Front and Back document sides are required.';
-      result.reason = 'MISSING_SIDE';
-      return result;
-    }
-
-    const frontDet = result.frontResult?.detectedType;
-    const backDet = result.backResult?.detectedType;
-
-    if (frontDet && backDet && frontDet !== backDet) {
-      result.error = 'Front/Back document does not match.';
-      result.details = `Front appears to be ${frontDet} while Back appears to be ${backDet}.`;
-      result.reason = 'FRONT_BACK_MISMATCH';
-      return result;
-    }
+  if (validateSide === 'both' && (!hasFront || !hasBack)) {
+    result.error = 'Both Front and Back document sides are required.';
+    result.reason = 'MISSING_SIDE';
+    result.decision = 'REJECTED';
+    result.overallResult = 'REJECTED';
+    return result;
   }
 
-  // Passed quality & classification checks!
-  result.valid = true;
-  result.checks.imageClear = true;
-  result.checks.textReadable = true;
-  result.checks.correctDocumentType = true;
-  result.checks.frontBackValid = true;
-  result.qualityPassed = true;
-  result.typeMatchPassed = true;
-  result.sideValidPassed = true;
-  result.detectedType = result.frontResult?.detectedType || result.backResult?.detectedType || selectedDocumentType;
+  const frontDet = result.frontResult?.detectedType;
+  const backDet = result.backResult?.detectedType;
+  if (frontDet && backDet && frontDet !== backDet && (result.frontResult?.confidence >= 40) && (result.backResult?.confidence >= 40)) {
+    result.valid = false;
+    result.decision = 'REJECTED';
+    result.overallResult = 'REJECTED';
+    result.error = 'Front/Back document type does not match.';
+    result.details = `Front appears to be ${frontDet} while Back appears to be ${backDet}.`;
+    result.reason = 'FRONT_BACK_MISMATCH';
+    return result;
+  }
 
-  // 4. Address & Name Extraction & Multi-language Detection
+  // 4. Combined Text, Multilingual Detection, and Field Extraction
   const combinedRawText = [extractedFrontText, extractedBackText].filter(Boolean).join('\n');
   const langDetection = detectDocumentLanguage(combinedRawText);
   result.languageDetection = langDetection;
@@ -921,23 +968,58 @@ async function validateAddressProofDocument({
   result.isMixedLanguage = langDetection.isMixedLanguage;
   result.languageSummary = langDetection.languageSummary;
 
-  const { extractAddressFromText, extractNameFromText, compareNameComponents } = require('./documentAddressMatcher');
-  const rawExtractedAddr = extractAddressFromText(combinedRawText) || combinedRawText.substring(0, 160).trim();
+  // Calculate overall OCR confidence score
+  const frontConf = result.frontResult?.ocrConfidence || (extractedFrontText.length > 20 ? 70 : 0);
+  const backConf = result.backResult?.ocrConfidence || (extractedBackText.length > 20 ? 70 : 0);
+  const ocrConfidence = (frontConf > 0 && backConf > 0)
+    ? Math.round((frontConf + backConf) / 2)
+    : (frontConf || backConf || (combinedRawText.length > 30 ? 75 : 0));
+  result.ocrConfidence = ocrConfidence;
+  result.confidenceLevel = ocrConfidence >= 65 ? 'HIGH' : ocrConfidence >= 40 ? 'MEDIUM' : 'LOW';
+
+  // Field extraction: Address
+  const rawExtractedAddr = extractAddressFromText(combinedRawText) || extractAddressFromText(extractedBackText) || combinedRawText.substring(0, 160).trim();
   result.extractedAddress = maskAadhaarNumbers(rawExtractedAddr);
 
-  // Extract Name from document text (English & Indian Languages)
+  // Field extraction: Employee Name
   const rawExtractedName = extractNameFromText(combinedRawText, selectedDocumentType, [hrName, employeeConfirmedName]) ||
                           extractNameFromText(extractedFrontText, selectedDocumentType, [hrName, employeeConfirmedName]) ||
                           extractNameFromText(extractedBackText, selectedDocumentType, [hrName, employeeConfirmedName]);
   result.extractedName = rawExtractedName;
 
-  // Extract Masked Aadhaar number if present:
+  // Field extraction: PIN Code
+  const extractedPincode = extractPincode(combinedRawText) || extractPincode(rawExtractedAddr) || '';
+  result.extractedPincode = extractedPincode;
+
+  // Field extraction: Masked ID
   const aadhaarMatch = combinedRawText.match(/\b\d{4}\s*\d{4}\s*(\d{4})\b/);
   if (aadhaarMatch) {
     result.maskedId = `XXXX-XXXX-${aadhaarMatch[1]}`;
+  } else if (selectedDocumentType === DOCUMENT_TYPES.VOTER_ID) {
+    const vMatch = combinedRawText.match(/\b([A-Z]{3}[0-9]{7})\b/i);
+    if (vMatch) result.maskedId = vMatch[1].toUpperCase();
+  } else if (selectedDocumentType === DOCUMENT_TYPES.PASSPORT) {
+    const pMatch = combinedRawText.match(/\b([A-Z][0-9]{7})\b/i);
+    if (pMatch) result.maskedId = pMatch[1].toUpperCase();
+  } else if (selectedDocumentType === DOCUMENT_TYPES.DRIVING_LICENCE) {
+    const dlMatch = combinedRawText.match(/\b([A-Z]{2}[-\s]?\d{2}[-\s]?(?:\d{4}|\d{11}))\b/i);
+    if (dlMatch) result.maskedId = dlMatch[1].toUpperCase();
   }
 
-  // Compare Name if target name provided
+  // Identify unreadable or uncertain fields
+  const unreadableFields = [];
+  if (!rawExtractedName || rawExtractedName.trim().length < 3 || rawExtractedName.includes('could not be')) {
+    unreadableFields.push('Employee Name');
+  }
+  if (!rawExtractedAddr || rawExtractedAddr.trim().length < 10 || rawExtractedAddr.includes('could not be')) {
+    unreadableFields.push('Residential Address');
+  }
+  if (!extractedPincode) {
+    unreadableFields.push('PIN Code');
+  }
+  result.unreadableFields = unreadableFields;
+
+  // 5. Compare Name against HR records (sensible matching)
   if (hrName || employeeConfirmedName) {
     const hrNameComp = compareNameComponents(hrName || employeeConfirmedName, rawExtractedName, combinedRawText);
     const empNameComp = compareNameComponents(employeeConfirmedName || hrName, rawExtractedName, combinedRawText);
@@ -955,7 +1037,7 @@ async function validateAddressProofDocument({
     };
   }
 
-  // Compare Address
+  // 6. Compare Address against HR records (sensible matching)
   if (hrAddress || employeeConfirmedAddress) {
     const hrComp = compareAddressComponents(hrAddress || employeeConfirmedAddress, combinedRawText, rawExtractedAddr);
     const empComp = compareAddressComponents(employeeConfirmedAddress || hrAddress, combinedRawText, rawExtractedAddr);
@@ -973,7 +1055,90 @@ async function validateAddressProofDocument({
     };
   }
 
+  result.detectedType = result.frontResult?.detectedType || result.backResult?.detectedType || selectedDocumentType;
+
+  // 7. Check if document text could not be clearly read (Unclear / degraded text)
+  const isFrontUnclear = extractedFrontText.trim().length < 8;
+  const isBackUnclear = extractedBackText.trim().length < 8;
+  const isTotallyUnclear = (validateSide === 'both' && isFrontUnclear && isBackUnclear) ||
+                          (validateSide === 'front' && isFrontUnclear) ||
+                          (validateSide === 'back' && isBackUnclear) ||
+                          combinedRawText.trim().length < 8;
+
+  if (isTotallyUnclear) {
+    result.error = 'Document text could not be clearly read. Flagged for HR/BGV manual review.';
+    result.details = 'OCR was unable to extract legible text. Document exhibits wear, fading, or damage. Sent to HR/BGV review queue.';
+    result.reason = 'UNREADABLE_TEXT';
+    result.decision = 'HR/BGV REVIEW REQUIRED';
+    result.overallResult = 'REVIEW REQUIRED';
+    result.statusMessage = 'ADDRESS COULD NOT BE READ – REVIEW REQUIRED';
+    result.requiresManualReview = true;
+    result.valid = true;
+    return result;
+  }
+
+  // 8. Three-Tier Validation Decision System
+  const isNameMatch = result.nameMatch?.overallResult === 'MATCH';
+  const isNamePartial = result.nameMatch?.overallResult === 'PARTIAL';
+  const isAddressMatch = result.addressMatch?.overallResult === 'MATCHED';
+  const isAddressPartial = result.addressMatch?.overallResult === 'REVIEW REQUIRED';
+  const hasCriticalFields = Boolean(rawExtractedName && rawExtractedAddr && extractedPincode);
+
+  // OUTCOME A: ACCEPTED
+  // Important information is readable, OCR confidence is sufficient, and document requirements are satisfied
+  if (
+    (ocrConfidence >= 45 || isAddressMatch) &&
+    (isNameMatch || isNamePartial) &&
+    (isAddressMatch || (isAddressPartial && (result.addressMatch.hrScore >= 70 || result.addressMatch.empScore >= 70))) &&
+    hasCriticalFields
+  ) {
+    result.valid = true;
+    result.decision = 'ACCEPTED';
+    result.overallResult = 'MATCHED';
+    result.statusMessage = 'DOCUMENT ACCEPTED';
+    result.requiresManualReview = false;
+    result.qualityPassed = true;
+    result.typeMatchPassed = true;
+    result.sideValidPassed = true;
+    result.checks = {
+      imageClear: true,
+      textReadable: true,
+      correctDocumentType: true,
+      frontBackValid: true
+    };
+    result.details = 'Important identity and address information is readable, OCR confidence is sufficient, and document requirements are satisfied.';
+    return result;
+  }
+
+  // OUTCOME B: HR/BGV REVIEW REQUIRED
+  // The document is genuine-looking and partially readable, but some important fields or OCR results need human confirmation
+  // Supports old, slightly scratched, faded, folded, and mildly damaged documents without rejecting them
   result.valid = true;
+  result.decision = 'HR/BGV REVIEW REQUIRED';
+  result.overallResult = 'REVIEW REQUIRED';
+  result.statusMessage = 'DOCUMENT ACCEPTED – SENT FOR HR/BGV REVIEW';
+  result.requiresManualReview = true;
+  result.qualityPassed = true;
+  result.typeMatchPassed = true;
+  result.sideValidPassed = true;
+  result.checks = {
+    imageClear: true,
+    textReadable: true,
+    correctDocumentType: true,
+    frontBackValid: true
+  };
+
+  const reviewReasons = [];
+  if (unreadableFields.length > 0) reviewReasons.push(`Uncertain/unreadable fields: ${unreadableFields.join(', ')}`);
+  if (ocrConfidence < 50) reviewReasons.push(`OCR confidence ${ocrConfidence}%`);
+  if (isNamePartial || !isNameMatch) reviewReasons.push('Name requires human confirmation');
+  if (isAddressPartial || !isAddressMatch) reviewReasons.push('Address requires human confirmation');
+  if (frontQuality?.needsManualReview || backQuality?.needsManualReview) reviewReasons.push('Normal document wear (faded/scratched/folded/aged)');
+
+  result.details = reviewReasons.length > 0
+    ? `Sent for HR/BGV manual review: ${reviewReasons.join(' • ')}.`
+    : 'Document accepted. Flagged for HR/BGV human confirmation.';
+
   return result;
 }
 

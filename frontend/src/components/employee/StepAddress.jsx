@@ -78,13 +78,13 @@ export function StepAddress() {
           <Home size={16} />
           <span>Address on HR Record</span>
         </div>
-        <div style={{ fontSize: '1.05rem', color: '#4A0404', lineHeight: 1.5, fontWeight: 600 }}>
+        <div style={{ fontSize: '1.05rem', color: 'var(--emp-title-color)', lineHeight: 1.5, fontWeight: 600 }}>
           {employee?.hrAddress || 'Address on record'}
         </div>
       </div>
 
       <div style={{ marginBottom: '20px' }}>
-        <div style={{ fontSize: '1rem', fontWeight: 700, color: '#4A0404', marginBottom: '12px' }}>
+        <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--emp-title-color)', marginBottom: '12px' }}>
           Is this your current address?
         </div>
 

@@ -178,6 +178,8 @@ export const api = {
       if (payload.backFile) formData.append('back', payload.backFile);
       if (payload.frontBase64) formData.append('frontBase64', payload.frontBase64);
       if (payload.backBase64) formData.append('backBase64', payload.backBase64);
+      if (payload.frontEnhancedBase64) formData.append('frontEnhancedBase64', payload.frontEnhancedBase64);
+      if (payload.backEnhancedBase64) formData.append('backEnhancedBase64', payload.backEnhancedBase64);
       if (payload.frontMetrics) formData.append('frontMetrics', JSON.stringify(payload.frontMetrics));
       if (payload.backMetrics) formData.append('backMetrics', JSON.stringify(payload.backMetrics));
 
@@ -210,6 +212,8 @@ export const api = {
         if (docDataOrType.backFile) formData.append('back', docDataOrType.backFile);
         if (docDataOrType.frontBase64) formData.append('frontBase64', docDataOrType.frontBase64);
         if (docDataOrType.backBase64) formData.append('backBase64', docDataOrType.backBase64);
+        if (docDataOrType.frontEnhancedBase64) formData.append('frontEnhancedBase64', docDataOrType.frontEnhancedBase64);
+        if (docDataOrType.backEnhancedBase64) formData.append('backEnhancedBase64', docDataOrType.backEnhancedBase64);
         if (docDataOrType.document) formData.append('document', docDataOrType.document);
       }
 

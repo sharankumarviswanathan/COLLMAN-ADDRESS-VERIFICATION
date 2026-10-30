@@ -9,6 +9,11 @@ const { upload, uploadsDir } = require('../middleware/upload');
 const { calculateDistanceMeters, classifyDistance } = require('../utils/geoUtils');
 const { validateImage } = require('../utils/imageValidator');
 const { validateAddressProofDocument } = require('../utils/addressProofValidator');
+const { preprocessDocumentImage } = require('../utils/documentPreprocessor');
+const crypto = require('crypto');
+
+// In-memory cache for validated photo signatures and metrics per employee session
+const sessionValidatedPhotos = new Map();
 
 // Helper to sanitize base64 image strings and save to disk
 function saveBase64Image(base64Data, prefix = 'img') {
@@ -859,18 +864,30 @@ router.post('/upload-landmark-photo', authenticateEmployeeSession, async (req, r
     }
 
     const buffer = getBufferFromBase64(req.body.imageBase64);
+    const employeeId = req.employee?.employee_id || 'anonymous';
+    const imageHash = crypto.createHash('sha256').update(buffer).digest('hex');
+
+    const cachedValidation = sessionValidatedPhotos.get(`${employeeId}:landmark`);
+    const effectiveMetrics = (req.body.clientMetrics && Object.keys(req.body.clientMetrics).length > 0)
+      ? req.body.clientMetrics
+      : (cachedValidation && cachedValidation.imageHash === imageHash ? cachedValidation.metrics : {});
+
     const validation = await validateImage({
       imageBuffer: buffer,
       photoType: 'landmark',
-      clientMetrics: req.body.clientMetrics || {},
+      clientMetrics: effectiveMetrics,
       hrAddress: req.employee ? req.employee.hr_current_address : ''
     });
 
     if (!validation.valid) {
       return res.status(400).json({
-        error: validation.error || 'Nearby landmark validation failed. Please retake the photo.'
+        error: validation.error || 'Nearby landmark validation failed. Please retake the photo.',
+        checks: validation.checks,
+        metrics: validation.metrics
       });
     }
+
+    sessionValidatedPhotos.delete(`${employeeId}:landmark`);
 
     const savedFile = saveBase64Image(req.body.imageBase64, `landmark_${req.employee.employee_id}`);
     const { latitude, longitude, accuracy, capturedAt } = req.body;
@@ -944,18 +961,30 @@ router.post('/upload-street-photo', authenticateEmployeeSession, async (req, res
 
     // Validate uploaded street photo strictly before saving
     const buffer = getBufferFromBase64(req.body.imageBase64);
+    const employeeId = req.employee?.employee_id || 'anonymous';
+    const imageHash = crypto.createHash('sha256').update(buffer).digest('hex');
+
+    const cachedValidation = sessionValidatedPhotos.get(`${employeeId}:street`);
+    const effectiveMetrics = (req.body.clientMetrics && Object.keys(req.body.clientMetrics).length > 0)
+      ? req.body.clientMetrics
+      : (cachedValidation && cachedValidation.imageHash === imageHash ? cachedValidation.metrics : {});
+
     const validation = await validateImage({
       imageBuffer: buffer,
       photoType: 'street',
-      clientMetrics: req.body.clientMetrics || {},
+      clientMetrics: effectiveMetrics,
       hrAddress: req.employee ? req.employee.hr_current_address : ''
     });
 
     if (!validation.valid) {
       return res.status(400).json({
-        error: validation.error || 'Street board not detected or street name is not readable. Please retake the photo.'
+        error: validation.error || 'Street board not detected or street name is not readable. Please retake the photo.',
+        checks: validation.checks,
+        metrics: validation.metrics
       });
     }
+
+    sessionValidatedPhotos.delete(`${employeeId}:street`);
 
     const savedFile = saveBase64Image(req.body.imageBase64, `street_${req.employee.employee_id}`);
     const { latitude, longitude, accuracy, capturedAt } = req.body;
@@ -1028,18 +1057,30 @@ router.post('/upload-house-photo', authenticateEmployeeSession, async (req, res)
     }
 
     const buffer = getBufferFromBase64(req.body.imageBase64);
+    const employeeId = req.employee?.employee_id || 'anonymous';
+    const imageHash = crypto.createHash('sha256').update(buffer).digest('hex');
+
+    const cachedValidation = sessionValidatedPhotos.get(`${employeeId}:building`);
+    const effectiveMetrics = (req.body.clientMetrics && Object.keys(req.body.clientMetrics).length > 0)
+      ? req.body.clientMetrics
+      : (cachedValidation && cachedValidation.imageHash === imageHash ? cachedValidation.metrics : {});
+
     const validation = await validateImage({
       imageBuffer: buffer,
       photoType: 'building',
-      clientMetrics: req.body.clientMetrics || {},
+      clientMetrics: effectiveMetrics,
       hrAddress: req.employee ? req.employee.hr_current_address : ''
     });
 
     if (!validation.valid) {
       return res.status(400).json({
-        error: validation.error || 'Full building validation failed. Please retake the photo.'
+        error: validation.error || 'Full building validation failed. Please retake the photo.',
+        checks: validation.checks,
+        metrics: validation.metrics
       });
     }
+
+    sessionValidatedPhotos.delete(`${employeeId}:building`);
 
     const savedFile = saveBase64Image(req.body.imageBase64, `house_${req.employee.employee_id}`);
     const { latitude, longitude, accuracy, capturedAt } = req.body;
@@ -1130,7 +1171,25 @@ router.post('/validate-image', authenticateEmployeeSession, async (req, res) => 
       hrAddress
     });
 
-    res.json(report);
+    const imageHash = crypto.createHash('sha256').update(buffer).digest('hex');
+    const employeeId = req.employee?.employee_id || 'anonymous';
+    sessionValidatedPhotos.set(`${employeeId}:${photoType}`, {
+      imageHash,
+      valid: report.valid,
+      metrics: { ...(clientMetrics || {}), ...(report.metrics || {}) },
+      checks: report.checks,
+      error: report.error,
+      timestamp: Date.now()
+    });
+
+    res.json({
+      ...report,
+      imageHash,
+      metrics: {
+        ...(clientMetrics || {}),
+        ...(report.metrics || {})
+      }
+    });
   } catch (err) {
     console.error('Image validation error:', err);
     res.json({
@@ -1154,18 +1213,30 @@ router.post('/upload-door-photo', authenticateEmployeeSession, async (req, res) 
     }
 
     const buffer = getBufferFromBase64(req.body.imageBase64);
+    const employeeId = req.employee?.employee_id || 'anonymous';
+    const imageHash = crypto.createHash('sha256').update(buffer).digest('hex');
+
+    const cachedValidation = sessionValidatedPhotos.get(`${employeeId}:door_selfie`);
+    const effectiveMetrics = (req.body.clientMetrics && Object.keys(req.body.clientMetrics).length > 0)
+      ? req.body.clientMetrics
+      : (cachedValidation && cachedValidation.imageHash === imageHash ? cachedValidation.metrics : {});
+
     const validation = await validateImage({
       imageBuffer: buffer,
       photoType: 'door_selfie',
-      clientMetrics: req.body.clientMetrics || {},
+      clientMetrics: effectiveMetrics,
       hrAddress: req.employee ? req.employee.hr_current_address : ''
     });
 
     if (!validation.valid) {
       return res.status(400).json({
-        error: validation.error || 'Door number selfie validation failed. Please retake the photo.'
+        error: validation.error || 'Door number selfie validation failed. Please retake the photo.',
+        checks: validation.checks,
+        metrics: validation.metrics
       });
     }
+
+    sessionValidatedPhotos.delete(`${employeeId}:door_selfie`);
 
     const savedFile = saveBase64Image(req.body.imageBase64, `door_${req.employee.employee_id}`);
     const { latitude, longitude, accuracy, capturedAt } = req.body;
@@ -1238,18 +1309,30 @@ router.post('/upload-selfie', authenticateEmployeeSession, async (req, res) => {
     }
 
     const buffer = getBufferFromBase64(req.body.imageBase64);
+    const employeeId = req.employee?.employee_id || 'anonymous';
+    const imageHash = crypto.createHash('sha256').update(buffer).digest('hex');
+
+    const cachedValidation = sessionValidatedPhotos.get(`${employeeId}:selfie`);
+    const effectiveMetrics = (req.body.clientMetrics && Object.keys(req.body.clientMetrics).length > 0)
+      ? req.body.clientMetrics
+      : (cachedValidation && cachedValidation.imageHash === imageHash ? cachedValidation.metrics : {});
+
     const validation = await validateImage({
       imageBuffer: buffer,
       photoType: 'selfie',
-      clientMetrics: req.body.clientMetrics || {},
+      clientMetrics: effectiveMetrics,
       hrAddress: req.employee ? req.employee.hr_current_address : ''
     });
 
     if (!validation.valid) {
       return res.status(400).json({
-        error: validation.error || 'Live selfie validation failed. Please retake the photo.'
+        error: validation.error || 'Live selfie validation failed. Please retake the photo.',
+        checks: validation.checks,
+        metrics: validation.metrics
       });
     }
+
+    sessionValidatedPhotos.delete(`${employeeId}:selfie`);
 
     const savedFile = saveBase64Image(req.body.imageBase64, `selfie_${req.employee.employee_id}`);
     const { latitude, longitude, accuracy, capturedAt } = req.body;
@@ -1343,18 +1426,30 @@ router.post('/upload-joint-selfie', authenticateEmployeeSession, async (req, res
 
     // 1. Strict Two-Face & Quality Validation
     const buffer = getBufferFromBase64(rawImage);
+    const employeeId = req.employee?.employee_id || 'anonymous';
+    const imageHash = crypto.createHash('sha256').update(buffer).digest('hex');
+
+    const cachedValidation = sessionValidatedPhotos.get(`${employeeId}:joint_selfie`);
+    const effectiveMetrics = (clientMetrics && Object.keys(clientMetrics).length > 0)
+      ? clientMetrics
+      : (cachedValidation && cachedValidation.imageHash === imageHash ? cachedValidation.metrics : {});
+
     const validation = await validateImage({
       imageBuffer: buffer,
       photoType: 'joint_selfie',
-      clientMetrics: clientMetrics || {},
+      clientMetrics: effectiveMetrics,
       hrAddress: req.employee ? req.employee.hr_current_address : ''
     });
 
     if (!validation.valid) {
       return res.status(400).json({
-        error: validation.error || 'TL & Employee Joint Selfie validation failed. Both faces must be clearly visible.'
+        error: validation.error || 'TL & Employee Joint Selfie validation failed. Both faces must be clearly visible.',
+        checks: validation.checks,
+        metrics: validation.metrics
       });
     }
+
+    sessionValidatedPhotos.delete(`${employeeId}:joint_selfie`);
 
     // 2. Resolve / Authenticate Team Leader identity
     let resolvedTlId = (tlId || '').trim();
@@ -1564,16 +1659,24 @@ router.post('/validate-address-proof', authenticateEmployeeSession, upload.field
 router.post('/upload-document', authenticateEmployeeSession, upload.fields([
   { name: 'document', maxCount: 1 },
   { name: 'front', maxCount: 1 },
-  { name: 'back', maxCount: 1 }
+  { name: 'back', maxCount: 1 },
+  { name: 'frontEnhanced', maxCount: 1 },
+  { name: 'backEnhanced', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    const { documentType, frontBase64, backBase64 } = req.body;
+    const {
+      documentType,
+      frontBase64,
+      backBase64,
+      frontEnhancedBase64,
+      backEnhancedBase64
+    } = req.body;
 
     if (!documentType) {
       return res.status(400).json({ error: 'Please select an address proof document type.' });
     }
 
-    // Resolve Front Document / Photo
+    // 1. Resolve Front Document / Photo (Original)
     let frontInfo = null;
     if (req.files && (req.files['front']?.[0] || req.files['document']?.[0])) {
       const file = req.files['front']?.[0] || req.files['document']?.[0];
@@ -1595,7 +1698,7 @@ router.post('/upload-document', authenticateEmployeeSession, upload.fields([
       };
     }
 
-    // Resolve Back Document / Photo
+    // 2. Resolve Back Document / Photo (Original)
     let backInfo = null;
     if (req.files && req.files['back']?.[0]) {
       const file = req.files['back'][0];
@@ -1620,7 +1723,7 @@ router.post('/upload-document', authenticateEmployeeSession, upload.fields([
     // If either side wasn't provided in this request, check existing progress
     if (!frontInfo || !backInfo) {
       const currentProgress = await query.get(
-        'SELECT document_path, document_original_name, document_back_path, document_back_original_name FROM verification_progress WHERE employee_id = ?',
+        'SELECT document_path, document_original_name, document_back_path, document_back_original_name, document_enhanced_path, document_back_enhanced_path FROM verification_progress WHERE employee_id = ?',
         [req.employee.employee_id]
       );
       if (!frontInfo && currentProgress?.document_path) {
@@ -1647,14 +1750,115 @@ router.post('/upload-document', authenticateEmployeeSession, upload.fields([
       return res.status(400).json({ error: 'Please provide the BACK SIDE of the address proof document.' });
     }
 
+    // 3. Resolve or Generate Enhanced Front Image (Intelligent Preprocessing: Contrast + Sharpening)
+    let frontEnhancedInfo = null;
+    if (req.files && req.files['frontEnhanced']?.[0]) {
+      const file = req.files['frontEnhanced'][0];
+      frontEnhancedInfo = {
+        filePath: file.path,
+        fileName: file.originalname,
+        fileUrl: `/uploads/${file.filename}`
+      };
+    } else if (frontEnhancedBase64) {
+      const saved = saveBase64Image(frontEnhancedBase64, `doc_front_enhanced_${req.employee.employee_id}`);
+      frontEnhancedInfo = {
+        filePath: saved.filePath,
+        fileName: saved.fileName,
+        fileUrl: `/uploads/${saved.fileName}`
+      };
+    } else if (frontInfo.filePath && fs.existsSync(frontInfo.filePath) && !frontInfo.filePath.toLowerCase().endsWith('.pdf')) {
+      try {
+        const prep = await preprocessDocumentImage(fs.readFileSync(frontInfo.filePath));
+        if (prep && prep.enhancedBuffer) {
+          const enhancedName = `doc_front_enhanced_${req.employee.employee_id}_${Date.now()}.jpg`;
+          const enhancedPath = path.join(uploadsDir, enhancedName);
+          fs.writeFileSync(enhancedPath, prep.enhancedBuffer);
+          frontEnhancedInfo = {
+            filePath: enhancedPath,
+            fileName: enhancedName,
+            fileUrl: `/uploads/${enhancedName}`
+          };
+        }
+      } catch (pErr) {
+        console.warn('Front document auto-enhancement warning:', pErr.message);
+      }
+    }
+    if (!frontEnhancedInfo) {
+      frontEnhancedInfo = frontInfo;
+    }
+
+    // 4. Resolve or Generate Enhanced Back Image
+    let backEnhancedInfo = null;
+    if (req.files && req.files['backEnhanced']?.[0]) {
+      const file = req.files['backEnhanced'][0];
+      backEnhancedInfo = {
+        filePath: file.path,
+        fileName: file.originalname,
+        fileUrl: `/uploads/${file.filename}`
+      };
+    } else if (backEnhancedBase64) {
+      const saved = saveBase64Image(backEnhancedBase64, `doc_back_enhanced_${req.employee.employee_id}`);
+      backEnhancedInfo = {
+        filePath: saved.filePath,
+        fileName: saved.fileName,
+        fileUrl: `/uploads/${saved.fileName}`
+      };
+    } else if (backInfo.filePath && fs.existsSync(backInfo.filePath) && !backInfo.filePath.toLowerCase().endsWith('.pdf')) {
+      try {
+        const prep = await preprocessDocumentImage(fs.readFileSync(backInfo.filePath));
+        if (prep && prep.enhancedBuffer) {
+          const enhancedName = `doc_back_enhanced_${req.employee.employee_id}_${Date.now()}.jpg`;
+          const enhancedPath = path.join(uploadsDir, enhancedName);
+          fs.writeFileSync(enhancedPath, prep.enhancedBuffer);
+          backEnhancedInfo = {
+            filePath: enhancedPath,
+            fileName: enhancedName,
+            fileUrl: `/uploads/${enhancedName}`
+          };
+        }
+      } catch (pErr) {
+        console.warn('Back document auto-enhancement warning:', pErr.message);
+      }
+    }
+    if (!backEnhancedInfo) {
+      backEnhancedInfo = backInfo;
+    }
+
+    // 5. Run Intelligent OCR & Decision Engine
+    const employee = await query.get('SELECT * FROM employees WHERE employee_id = ?', [req.employee.employee_id]);
+    const progress = await query.get('SELECT * FROM verification_progress WHERE employee_id = ?', [req.employee.employee_id]);
+
+    const hrAddress = employee?.hr_current_address || '';
+    const empConfirmedAddress = progress?.submitted_address || hrAddress;
+    const hrName = employee?.employee_name || '';
+    const empConfirmedName = progress?.submitted_name || hrName;
+
+    const validation = await validateAddressProofDocument({
+      frontFileOrBuffer: frontEnhancedInfo.filePath,
+      backFileOrBuffer: backEnhancedInfo.filePath,
+      selectedDocumentType: documentType,
+      hrAddress,
+      employeeConfirmedAddress: empConfirmedAddress,
+      hrName,
+      employeeConfirmedName: empConfirmedName,
+      validateSide: 'both'
+    });
+
+    const docDecision = validation.decision || (validation.valid ? 'ACCEPTED' : 'HR/BGV REVIEW REQUIRED');
+
+    // 6. Update verification progress with original and enhanced paths, OCR results, and decision
     await query.run(
       `UPDATE verification_progress SET
         address_proof_uploaded = 1,
         document_type = ?,
         document_path = ?,
         document_original_name = ?,
+        document_enhanced_path = ?,
         document_back_path = ?,
         document_back_original_name = ?,
+        document_back_enhanced_path = ?,
+        address_proof_ocr_result = ?,
+        address_proof_decision = ?,
         current_step = MAX(current_step, 11),
         last_saved_at = CURRENT_TIMESTAMP
        WHERE employee_id = ?`,
@@ -1662,41 +1866,82 @@ router.post('/upload-document', authenticateEmployeeSession, upload.fields([
         documentType,
         frontInfo.filePath,
         frontInfo.fileName,
+        frontEnhancedInfo.filePath,
         backInfo.filePath,
         backInfo.fileName,
+        backEnhancedInfo.filePath,
+        JSON.stringify(validation),
+        docDecision,
         req.employee.employee_id
       ]
     );
 
-    // Save to evidence table with TL ID and Name
+    // Save both front and back evidence records with TL ID and Name
     await query.run(
       `INSERT INTO verification_evidence (
-        employee_id, evidence_type, document_type, file_path, original_filename, mime_type, file_size, tl_id, tl_name
-      ) VALUES (?, 'address_proof', ?, ?, ?, ?, ?, ?, ?)`,
-      [req.employee.employee_id, `${documentType} (Front)`, frontInfo.filePath, frontInfo.fileName, frontInfo.mimeType || 'application/octet-stream', frontInfo.fileSize || 0, req.tlId || req.employee.team_leader || null, req.tlName || req.employee.team_leader || null]
+        employee_id, evidence_type, document_type, file_path, original_filename, mime_type, file_size, validation_status, validation_report, tl_id, tl_name
+      ) VALUES (?, 'address_proof', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.employee.employee_id,
+        `${documentType} (Front)`,
+        frontInfo.filePath,
+        frontInfo.fileName,
+        frontInfo.mimeType || 'application/octet-stream',
+        frontInfo.fileSize || 0,
+        docDecision === 'ACCEPTED' ? 'PASSED' : 'REVIEW REQUIRED',
+        JSON.stringify({ decision: docDecision, ocrConfidence: validation.ocrConfidence, unreadableFields: validation.unreadableFields }),
+        req.tlId || req.employee.team_leader || null,
+        req.tlName || req.employee.team_leader || null
+      ]
     );
 
     await query.run(
       `INSERT INTO verification_evidence (
-        employee_id, evidence_type, document_type, file_path, original_filename, mime_type, file_size, tl_id, tl_name
-      ) VALUES (?, 'address_proof', ?, ?, ?, ?, ?, ?, ?)`,
-      [req.employee.employee_id, `${documentType} (Back)`, backInfo.filePath, backInfo.fileName, backInfo.mimeType || 'application/octet-stream', backInfo.fileSize || 0, req.tlId || req.employee.team_leader || null, req.tlName || req.employee.team_leader || null]
+        employee_id, evidence_type, document_type, file_path, original_filename, mime_type, file_size, validation_status, validation_report, tl_id, tl_name
+      ) VALUES (?, 'address_proof', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.employee.employee_id,
+        `${documentType} (Back)`,
+        backInfo.filePath,
+        backInfo.fileName,
+        backInfo.mimeType || 'application/octet-stream',
+        backInfo.fileSize || 0,
+        docDecision === 'ACCEPTED' ? 'PASSED' : 'REVIEW REQUIRED',
+        JSON.stringify({ decision: docDecision, ocrConfidence: validation.ocrConfidence, unreadableFields: validation.unreadableFields }),
+        req.tlId || req.employee.team_leader || null,
+        req.tlName || req.employee.team_leader || null
+      ]
     );
 
+    // Record reason for acceptance, manual review, or rejection in audit log
     await recordVerificationAuditLog(
       req,
       'Address Proof Uploaded',
-      `Address proof ${documentType} uploaded (Front & Back) [Agent: ${req.employee.employee_id}, TL: ${req.tlId || req.employee.team_leader || 'N/A'}]`
+      `Address proof ${documentType} uploaded (Front & Back). Decision: [${docDecision}], OCR Confidence: ${validation.ocrConfidence || 0}%, Reason: ${validation.details || 'Document verified'} [Agent: ${req.employee.employee_id}, TL: ${req.tlId || req.employee.team_leader || 'N/A'}]`
     );
 
     res.json({
       success: true,
-      message: 'Front and Back address proof uploaded successfully.',
+      message: docDecision === 'ACCEPTED'
+        ? 'Front and Back address proof uploaded and verified successfully.'
+        : 'Front and Back address proof accepted and routed for HR/BGV manual review.',
+      decision: docDecision,
       documentType,
       fileName: frontInfo.fileName,
       fileUrl: frontInfo.fileUrl,
+      enhancedFileName: frontEnhancedInfo.fileName,
+      enhancedFileUrl: frontEnhancedInfo.fileUrl,
       backFileName: backInfo.fileName,
-      backFileUrl: backInfo.fileUrl
+      backFileUrl: backInfo.fileUrl,
+      enhancedBackFileName: backEnhancedInfo.fileName,
+      enhancedBackFileUrl: backEnhancedInfo.fileUrl,
+      ocrConfidence: validation.ocrConfidence || 0,
+      confidenceLevel: validation.confidenceLevel || 'LOW',
+      unreadableFields: validation.unreadableFields || [],
+      extractedName: validation.extractedName || '',
+      extractedAddress: validation.extractedAddress || '',
+      extractedPincode: validation.extractedPincode || '',
+      validation
     });
   } catch (err) {
     console.error('Document upload error:', err);

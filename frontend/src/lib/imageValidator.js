@@ -1,4 +1,5 @@
 import { api } from '../api/client';
+import { computeImageSignature } from './imageNormalizer';
 
 /**
  * Client-Side Real-Time Image Quality & Content Validator
@@ -446,6 +447,7 @@ export async function validatePhotoInBrowser(dataUrl, photoType, hrAddress = '')
           valid: true,
           score: 90,
           error: null,
+          imageSignature: computeImageSignature(dataUrl),
           checks: {
             clarity: { passed: true, message: 'Clarity & focus are sharp' },
             lighting: { passed: true, message: 'Lighting is balanced' },
@@ -718,7 +720,15 @@ export async function validatePhotoWithAi(dataUrl, photoType, hrAddress = '') {
     );
 
     if (serverReport && typeof serverReport === 'object' && typeof serverReport.valid === 'boolean') {
-      return serverReport;
+      return {
+        ...serverReport,
+        metrics: {
+          ...(localReport.metrics || {}),
+          ...(serverReport.metrics || {})
+        },
+        imageSignature: serverReport.imageHash || localReport.imageSignature || computeImageSignature(dataUrl),
+        checks: serverReport.checks || localReport.checks
+      };
     }
 
     throw new Error('Invalid validation payload received from server');

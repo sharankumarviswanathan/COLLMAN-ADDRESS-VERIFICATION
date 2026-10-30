@@ -553,7 +553,7 @@ async function main() {
   console.log(` Isolated Port:          ${TEST_PORT}`);
   console.log(` Unique Test DB:         ${tempDbPath}`);
   console.log(` Unique Test Downloads:  ${tempDownloadsDir}`);
-  console.log(' Total Suites Scheduled: 23 test suites in 3 deterministic tiers');
+  console.log(' Total Suites Scheduled: 26 test suites in 3 deterministic tiers');
   console.log('================================================================\n');
 
   let overallSuccess = true;
@@ -578,16 +578,18 @@ async function main() {
     // TIER 1: Pure Unit Tests (Independent of DB & Server)
     // =============================================================
     console.log('================================================================');
-    console.log(' TIER 1: PURE UNIT TESTS (5 SUITES)');
+    console.log(' TIER 1: PURE UNIT TESTS (7 SUITES)');
     console.log(' (Executed independently without database or server)');
     console.log('================================================================');
 
     const tier1Suites = [
+      { file: 'addressProofIntelligentTolerance.test.js', timeoutMs: 25000 },
       { file: 'strictPhotoValidationRules.test.js', timeoutMs: 15000 },
       { file: 'googleGeocoding.test.js', timeoutMs: 15000 },
       { file: 'multiLanguageOcrAndMatchScoring.test.js', timeoutMs: 25000 },
       { file: 'geospatialAndTolerance.test.js', timeoutMs: 15000 },
-      { file: 'mapTileAndAddressMatching.test.js', timeoutMs: 15000 }
+      { file: 'mapTileAndAddressMatching.test.js', timeoutMs: 15000 },
+      { file: 'reverseGeocodingCoordinates.test.js', timeoutMs: 15000 }
     ];
 
     for (const suite of tier1Suites) {
@@ -829,12 +831,13 @@ async function main() {
       const finalUnconfirmedStarted = trackedProcesses.filter((e) => e.started && !e.confirmedStopped);
       const hasTeardownErrors = teardownErrors.length > 0;
       const allProcessesConfirmed = finalUnconfirmedStarted.length === 0;
-      const allSuitesRan = suiteResults.length === 24;
+      const totalExpectedSuites = 26;
+      const allSuitesRan = suiteResults.length === totalExpectedSuites;
       const allSuitesPassed = allSuitesRan && suiteResults.every((s) => s.success);
       const isSuccess = overallSuccess && allSuitesPassed && allProcessesConfirmed && !hasTeardownErrors;
 
       console.log('\n================================================================');
-      console.log(' COMPLETE ALL-SUITE EXECUTION SUMMARY (24 SUITES)               ');
+      console.log(` COMPLETE ALL-SUITE EXECUTION SUMMARY (${totalExpectedSuites} SUITES)               `);
       console.log('================================================================');
       console.log(' #  | Suite Name                                | Tier          | Status  | Time (ms)');
       console.log('----------------------------------------------------------------');
@@ -848,12 +851,12 @@ async function main() {
         console.log(` ${num} | ${name} | ${tier} | ${status} | ${time}`);
       });
 
-      if (suiteResults.length < 24) {
-        console.log(`\n⚠️  Only ${suiteResults.length} of 24 test suites executed due to early termination.`);
+      if (suiteResults.length < totalExpectedSuites) {
+        console.log(`\n⚠️  Only ${suiteResults.length} of ${totalExpectedSuites} test suites executed due to early termination.`);
       }
 
       console.log('----------------------------------------------------------------');
-      console.log(`Total Suites Ran:      ${suiteResults.length} / 24`);
+      console.log(`Total Suites Ran:      ${suiteResults.length} / ${totalExpectedSuites}`);
       console.log(`Suites Passed:         ${suiteResults.filter((s) => s.success).length}`);
       console.log(`Suites Failed:         ${suiteResults.filter((s) => !s.success).length}`);
       console.log(`Subprocesses Stopped:  ${allProcessesConfirmed ? 'ALL CONFIRMED ✓' : 'UNCONFIRMED / FAILED ❌'}`);
