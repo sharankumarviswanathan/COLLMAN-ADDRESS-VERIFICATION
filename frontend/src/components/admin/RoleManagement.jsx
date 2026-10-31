@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import { soundManager } from '../../lib/soundManager';
 import {
   Shield,
   ShieldPlus,
@@ -88,6 +89,11 @@ export function RoleManagement() {
   }, []);
 
   function showToast(text, type = 'success') {
+    if (type === 'error') {
+      soundManager.alert();
+    } else {
+      soundManager.success();
+    }
     setToastMsg({ type, text });
     setTimeout(() => setToastMsg({ type: '', text: '' }), 4000);
   }

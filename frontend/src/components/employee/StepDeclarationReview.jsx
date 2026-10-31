@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useVerification } from '../../context/VerificationContext';
 import { api } from '../../api/client';
+import { soundManager } from '../../lib/soundManager';
 import { CheckCircle2, AlertCircle, ArrowRight, ArrowLeft, ShieldCheck, CheckSquare, Square } from 'lucide-react';
 
 export function StepDeclarationReview() {
@@ -28,11 +29,13 @@ export function StepDeclarationReview() {
 
   async function handleFinalSubmit() {
     if (!confirmed) {
+      soundManager.alert();
       setErrorMsg('Please accept the Team Leader physical visit declaration to submit the verification.');
       return;
     }
 
     if (!progress.jointSelfieCaptured) {
+      soundManager.alert();
       setErrorMsg('Please complete the mandatory TL & Employee Joint Selfie before final submission.');
       return;
     }
@@ -47,11 +50,13 @@ export function StepDeclarationReview() {
 
       // 2. Final Submit
       const res = await api.verify.submit();
+      soundManager.confirm();
       setSubmissionResult(res);
       setShowConfirmModal(false);
       nextStep(); // moves to step 14 (StepSuccess)
     } catch (err) {
       console.error('Final submit error:', err);
+      soundManager.alert();
       setErrorMsg(err.message || 'Submission failed. Please try again.');
     } finally {
       setLoading(false);

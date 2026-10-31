@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../api/client';
+import { soundManager } from '../../lib/soundManager';
 import {
   UserPlus,
   UserCog,
@@ -116,6 +117,11 @@ export function UserManagement() {
   }, []);
 
   function showToast(text, type = 'success') {
+    if (type === 'error') {
+      soundManager.alert();
+    } else {
+      soundManager.success();
+    }
     setToastMsg({ type, text });
     setTimeout(() => setToastMsg({ type: '', text: '' }), 4000);
   }

@@ -1,15 +1,21 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useVerification } from '../../context/VerificationContext';
+import { soundManager } from '../../lib/soundManager';
 import { CheckCircle2, Copy, Check, Home } from 'lucide-react';
 
 export function StepSuccess() {
   const { submissionResult, employee, resetSession } = useVerification();
-  const [copied, setCopied] = React.useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    soundManager.success();
+  }, []);
 
   const refNo = submissionResult?.referenceNo || 'AV-2026-000001';
 
   function handleCopy() {
     navigator.clipboard.writeText(refNo);
+    soundManager.confirm();
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
   }

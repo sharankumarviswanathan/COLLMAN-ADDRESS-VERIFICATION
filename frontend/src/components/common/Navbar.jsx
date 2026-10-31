@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useSound } from '../../context/SoundContext';
 import {
   Menu,
   ExternalLink,
@@ -15,6 +16,8 @@ import {
   Sparkles,
   Sun,
   Moon,
+  Volume2,
+  VolumeX,
   LayoutDashboard,
   Users,
   RotateCcw,
@@ -30,6 +33,7 @@ import { Link, useNavigate } from 'react-router-dom';
 export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse, isLocked, lockMode, onSetLockMode }) {
   const { user, logout, hasPermission, hasAnyPermission } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const { soundEnabled, toggleSound } = useSound();
   const navigate = useNavigate();
   const [navMenuOpen, setNavMenuOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -281,6 +285,22 @@ export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse, isLocked, 
           )}
         </button>
 
+        {/* Circular Sound Effects Toggle Button */}
+        <button
+          id="btn-sound-toggle"
+          type="button"
+          className="topbar-circle-btn sound-toggle-btn"
+          title={soundEnabled ? 'Sound Effects: ON (Click to Mute)' : 'Sound Effects: OFF (Click to Enable)'}
+          onClick={toggleSound}
+          aria-label="Toggle Sound Effects"
+        >
+          {soundEnabled ? (
+            <Volume2 size={16} color="#10B981" />
+          ) : (
+            <VolumeX size={16} color="#94A3B8" />
+          )}
+        </button>
+
         {/* Circular Notification Button */}
         <button
           type="button"
@@ -422,6 +442,27 @@ export function Navbar({ onMenuToggle, isCollapsed, onToggleCollapse, isLocked, 
                     <Moon size={15} color="#6366F1" />
                     <span style={{ flex: 1 }}>Dark Mode</span>
                     <span className="badge badge-secondary" style={{ fontSize: '0.65rem' }}>Switch</span>
+                  </>
+                )}
+              </button>
+
+              {/* Sound Effects Toggle option */}
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={toggleSound}
+              >
+                {soundEnabled ? (
+                  <>
+                    <Volume2 size={15} color="#10B981" />
+                    <span style={{ flex: 1 }}>Sound Effects</span>
+                    <span className="badge badge-success" style={{ fontSize: '0.65rem' }}>ON</span>
+                  </>
+                ) : (
+                  <>
+                    <VolumeX size={15} color="#94A3B8" />
+                    <span style={{ flex: 1 }}>Sound Effects</span>
+                    <span className="badge badge-secondary" style={{ fontSize: '0.65rem' }}>OFF</span>
                   </>
                 )}
               </button>

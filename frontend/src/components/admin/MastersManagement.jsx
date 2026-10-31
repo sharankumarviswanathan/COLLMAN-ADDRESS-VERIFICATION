@@ -23,13 +23,17 @@ import {
   AlertCircle,
   MapPin,
   Info,
-  Sparkles
+  Sparkles,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 
 import { useAuth } from '../../context/AuthContext';
+import { useSound } from '../../context/SoundContext';
 
 export function MastersManagement() {
   const { user, hasPermission, hasAnyPermission } = useAuth();
+  const { soundEnabled, toggleSound, setSoundEnabled, playSuccess, playAlert, playConfirm } = useSound();
   const [masters, setMasters] = useState({
     branches: [],
     departments: [],
@@ -150,9 +154,11 @@ export function MastersManagement() {
 
     try {
       await api.masters.updateSettings(settingsForm);
+      playSuccess();
       setSuccessMsg('Settings updated successfully.');
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err) {
+      playAlert();
       alert('Failed to update settings.');
     } finally {
       setSavingSettings(false);
@@ -937,6 +943,68 @@ export function MastersManagement() {
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginTop: '4px' }}>
                 Powers rooftop-level geocoding precision for Indian residential addresses
               </span>
+            </div>
+
+            {/* Application Sound Feedback Option */}
+            <div style={{
+              backgroundColor: 'var(--bg-main)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 'var(--radius-md)',
+              padding: '14px 16px',
+              marginBottom: '20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: '50%',
+                  backgroundColor: soundEnabled ? 'rgba(16, 185, 129, 0.12)' : 'rgba(148, 163, 184, 0.12)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: soundEnabled ? '#10B981' : '#94A3B8',
+                  flexShrink: 0
+                }}>
+                  {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.84rem', fontWeight: 600, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>Audio Feedback & Sound Effects</span>
+                    <span className={`badge ${soundEnabled ? 'badge-success' : 'badge-secondary'}`} style={{ fontSize: '0.65rem' }}>
+                      {soundEnabled ? 'ENABLED' : 'MUTED'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    Plays subtle click sounds on buttons/tabs and gentle notifications on success or alerts.
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                {soundEnabled && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    style={{ fontSize: '0.74rem', padding: '5px 10px' }}
+                    onClick={() => playSuccess()}
+                    title="Play sample sound effect"
+                  >
+                    Test Sound
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={`btn btn-sm ${soundEnabled ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ fontSize: '0.74rem', padding: '5px 12px' }}
+                  onClick={toggleSound}
+                >
+                  {soundEnabled ? 'Sound ON' : 'Sound OFF'}
+                </button>
+              </div>
             </div>
 
             {hasPermission('manage_masters') && (

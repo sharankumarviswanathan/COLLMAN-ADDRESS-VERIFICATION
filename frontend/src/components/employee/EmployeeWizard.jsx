@@ -15,11 +15,13 @@ import { StepAddressProof } from './StepAddressProof';
 import { StepJointSelfie } from './StepJointSelfie';
 import { StepDeclarationReview } from './StepDeclarationReview';
 import { StepSuccess } from './StepSuccess';
-import { LogIn } from 'lucide-react';
+import { LogIn, Volume2, VolumeX } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useSound } from '../../context/SoundContext';
 
 export function EmployeeWizard() {
   const { step, employee } = useVerification();
+  const { soundEnabled, toggleSound } = useSound();
 
   // Wizard Step Labels (Step 2 to 13 correspond to actual verification steps 1 to 12)
   const stepLabels = {
@@ -53,28 +55,55 @@ export function EmployeeWizard() {
           </div>
         </div>
 
-        <Link
-          to="/admin/login"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            fontSize: '0.82rem',
-            fontWeight: 700,
-            color: '#FFFFFF',
-            textDecoration: 'none',
-            padding: '7px 14px',
-            borderRadius: 'var(--radius-sm)',
-            backgroundColor: 'rgba(255,255,255,0.18)',
-            border: '1px solid rgba(15, 255, 23, 0.45)',
-            transition: 'all 0.2s ease',
-            backdropFilter: 'blur(8px)',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
-          }}
-        >
-          <LogIn size={15} color="#0FFF17" strokeWidth={2.4} />
-          <span>HR Login</span>
-        </Link>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button
+            id="btn-emp-sound-toggle"
+            type="button"
+            onClick={toggleSound}
+            title={soundEnabled ? 'Sound Effects: ON (Click to Mute)' : 'Sound Effects: OFF (Click to Enable)'}
+            aria-label="Toggle Sound Effects"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '34px',
+              height: '34px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'rgba(255,255,255,0.18)',
+              border: '1px solid rgba(255, 255, 255, 0.3)',
+              color: soundEnabled ? '#0FFF17' : '#94A3B8',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              backdropFilter: 'blur(8px)',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+            }}
+          >
+            {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+          </button>
+
+          <Link
+            to="/admin/login"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.82rem',
+              fontWeight: 700,
+              color: '#FFFFFF',
+              textDecoration: 'none',
+              padding: '7px 14px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'rgba(255,255,255,0.18)',
+              border: '1px solid rgba(15, 255, 23, 0.45)',
+              transition: 'all 0.2s ease',
+              backdropFilter: 'blur(8px)',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+            }}
+          >
+            <LogIn size={15} color="#0FFF17" strokeWidth={2.4} />
+            <span>HR Login</span>
+          </Link>
+        </div>
       </header>
 
       {/* Main Form Body */}

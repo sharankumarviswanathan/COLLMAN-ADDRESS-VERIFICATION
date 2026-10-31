@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
+import { soundManager } from '../../lib/soundManager';
 import {
   X,
   Pencil,
@@ -173,6 +174,7 @@ export function EditEmployeeModal({ isOpen, onClose, onUpdated, employee, master
       !formData.state.trim() ||
       !formData.pincode.trim()
     ) {
+      soundManager.alert();
       setErrorMsg('Please fill in all mandatory employee and address fields.');
       return;
     }
@@ -182,6 +184,7 @@ export function EditEmployeeModal({ isOpen, onClose, onUpdated, employee, master
         (tl) => tl.full_name === formData.teamLeader || tl.username === formData.teamLeader
       );
       if (managerTeamLeaders.length > 0 && !isValidTl) {
+        soundManager.alert();
         setErrorMsg(`Validation error: Selected Team Leader '${formData.teamLeader}' does not report to Manager '${formData.reportingManager}'.`);
         return;
       }
@@ -193,6 +196,7 @@ export function EditEmployeeModal({ isOpen, onClose, onUpdated, employee, master
         (l) => l.location_name.toLowerCase().trim() === formData.location.toLowerCase().trim()
       ) || (employee && employee.location === formData.location);
       if (!isValidLoc) {
+        soundManager.alert();
         setErrorMsg(`Validation error: Location '${formData.location}' does not belong to branch '${formData.branch}'.`);
         return;
       }
@@ -203,6 +207,7 @@ export function EditEmployeeModal({ isOpen, onClose, onUpdated, employee, master
 
     try {
       await api.employees.update(employee.employee_id, formData);
+      soundManager.confirm();
       setSuccessMsg(`Employee details for ${formData.employeeName} (${employee.employee_id}) saved successfully.`);
       setTimeout(() => {
         if (onUpdated) onUpdated();
@@ -210,6 +215,7 @@ export function EditEmployeeModal({ isOpen, onClose, onUpdated, employee, master
       }, 1000);
     } catch (err) {
       console.error('Update error:', err);
+      soundManager.alert();
       setErrorMsg(err.message || 'Failed to update employee details.');
     } finally {
       setLoading(false);

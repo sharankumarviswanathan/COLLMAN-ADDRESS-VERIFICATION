@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { GeoComparisonMap } from '../map/GeoComparisonMap';
 import { ErrorBoundary } from '../common/ErrorBoundary';
+import { soundManager } from '../../lib/soundManager';
 import {
   ShieldCheck,
   CheckCircle2,
@@ -235,6 +236,7 @@ export function CaseReview() {
     setSubmittingDecision(true);
     try {
       const res = await api.review.submitDecision(id, selectedDecision, reviewerRemarks, failureReason);
+      soundManager.confirm();
       setDecisionSuccess(`Decision marked as ${selectedDecision}. Report placed in Download Area.`);
       setTimeout(() => {
         setDecisionModalOpen(false);

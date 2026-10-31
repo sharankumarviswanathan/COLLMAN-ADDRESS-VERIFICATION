@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import { soundManager } from '../../lib/soundManager';
 import {
   CheckSquare,
   Search,
@@ -121,10 +122,12 @@ export function VerificationQueue() {
     setDeleteError('');
     try {
       await api.queue.delete(deleteTarget.case_reference || deleteTarget.employee_id, deleteEmployeeAlso);
+      soundManager.confirm();
       setDeleteTarget(null);
       loadQueue();
     } catch (err) {
       console.error('Delete case error:', err);
+      soundManager.alert();
       setDeleteError(err.message || 'Failed to delete case.');
     } finally {
       setIsDeleting(false);

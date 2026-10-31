@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
+import { soundManager } from '../../lib/soundManager';
 import { X, UserPlus, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 export function AddEmployeeModal({ isOpen, onClose, onCreated, masters }) {
@@ -149,6 +150,7 @@ export function AddEmployeeModal({ isOpen, onClose, onCreated, masters }) {
     e.preventDefault();
 
     if (!formData.employeeId.trim() || !formData.employeeName.trim() || !formData.mobileNumber.trim() || !formData.currentAddress.trim()) {
+      soundManager.alert();
       setErrorMsg('Please fill in all mandatory fields.');
       return;
     }
@@ -158,6 +160,7 @@ export function AddEmployeeModal({ isOpen, onClose, onCreated, masters }) {
         (tl) => tl.full_name === formData.teamLeader || tl.username === formData.teamLeader
       );
       if (managerTeamLeaders.length > 0 && !isValidTl) {
+        soundManager.alert();
         setErrorMsg(`Validation error: Selected Team Leader '${formData.teamLeader}' does not report to Manager '${formData.reportingManager}'.`);
         return;
       }
@@ -169,6 +172,7 @@ export function AddEmployeeModal({ isOpen, onClose, onCreated, masters }) {
         (l) => l.location_name.toLowerCase().trim() === formData.location.toLowerCase().trim()
       );
       if (!isValidLoc) {
+        soundManager.alert();
         setErrorMsg(`Validation error: Location '${formData.location}' does not belong to branch '${formData.branch}'.`);
         return;
       }
@@ -183,6 +187,7 @@ export function AddEmployeeModal({ isOpen, onClose, onCreated, masters }) {
         employeeId: formData.employeeId.trim().toUpperCase()
       });
 
+      soundManager.confirm();
       setSuccessMsg(`Employee ${formData.employeeName} (${formData.employeeId.toUpperCase()}) created successfully.`);
       setTimeout(() => {
         onCreated();
@@ -190,6 +195,7 @@ export function AddEmployeeModal({ isOpen, onClose, onCreated, masters }) {
       }, 1200);
     } catch (err) {
       console.error('Create error:', err);
+      soundManager.alert();
       setErrorMsg(err.message || 'Failed to create employee.');
     } finally {
       setLoading(false);

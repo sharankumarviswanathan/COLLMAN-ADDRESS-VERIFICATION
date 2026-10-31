@@ -1,11 +1,22 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import { soundManager } from '../../lib/soundManager';
 
 export function ImageValidationFeedback({
   validating,
   validationResult,
   photoTitle
 }) {
+  useEffect(() => {
+    if (validationResult && !validating && typeof validationResult === 'object') {
+      if (validationResult.valid) {
+        soundManager.success();
+      } else {
+        soundManager.alert();
+      }
+    }
+  }, [validationResult, validating]);
+
   if (validating) {
     return (
       <div

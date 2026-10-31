@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
+import { SoundProvider } from './context/SoundContext';
 import { AuthProvider } from './context/AuthContext';
 import { VerificationProvider } from './context/VerificationContext';
 import { EmployeeWizard } from './components/employee/EmployeeWizard';
@@ -55,7 +56,8 @@ export function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider>
-        <AuthProvider>
+        <SoundProvider>
+          <AuthProvider>
       <BrowserRouter>
         <Routes>
           {/* 1. EMPLOYEE SIDE: ONE COMMON ADDRESS VERIFICATION LINK FOR ALL EMPLOYEES */}
@@ -100,8 +102,9 @@ export function App() {
           <Route path="*" element={<Navigate to="/verify" replace />} />
         </Routes>
       </BrowserRouter>
-    </AuthProvider>
-    </ThemeProvider>
+          </AuthProvider>
+        </SoundProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   );
 }
