@@ -35,9 +35,34 @@ export function StepSuccess() {
         Address Verification Submitted Successfully
       </h2>
 
-      <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: 1.6 }}>
-        Thank you, <strong>{employee?.employeeName || 'Employee'}</strong>. Your address verification details have been successfully submitted to Collman Services.
+      <p style={{ fontSize: '0.96rem', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: 1.6, fontWeight: 500 }}>
+        Employee address verification evidence submitted successfully by the Team Leader. The case is now awaiting HR/BGV review.
       </p>
+
+      {/* Verified Employee Context */}
+      {employee && (
+        <div style={{
+          backgroundColor: '#F8FAFC',
+          border: '1px solid #E2E8F0',
+          borderRadius: 'var(--radius-md)',
+          padding: '12px 16px',
+          marginBottom: '20px',
+          textAlign: 'left',
+          fontSize: '0.86rem'
+        }}>
+          <div style={{ fontSize: '0.74rem', color: '#64748B', fontWeight: 700, textTransform: 'uppercase', marginBottom: '4px' }}>
+            Verified Employee Record
+          </div>
+          <div style={{ fontWeight: 700, color: '#0F172A', fontSize: '0.98rem' }}>
+            {employee.employeeName} <span style={{ color: '#2563EB', fontWeight: 600 }}>({employee.employeeId})</span>
+          </div>
+          {employee.hrAddress && (
+            <div style={{ color: '#475569', fontSize: '0.82rem', marginTop: '4px' }}>
+              📍 {employee.hrAddress}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Reference Box */}
       <div style={{
@@ -81,16 +106,17 @@ export function StepSuccess() {
         marginBottom: '24px',
         lineHeight: 1.5
       }}>
-        The HR / Background Verification team will review your submitted evidence. You may now close this browser window.
+        The HR / BGV team will review the submitted verification dossier. You may now verify another employee or close this session.
       </div>
 
       <div className="emp-actions-bottom">
         <button
-          className="btn btn-secondary btn-large"
+          id="btn-verify-another-emp"
+          className="btn btn-primary btn-large"
           onClick={resetSession}
         >
           <Home size={18} />
-          <span>Done</span>
+          <span>Verify Another Employee</span>
         </button>
       </div>
     </div>

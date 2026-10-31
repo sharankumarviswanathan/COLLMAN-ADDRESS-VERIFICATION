@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useVerification } from '../../context/VerificationContext';
 import { api } from '../../api/client';
-import { getCameraStream, stopMediaStream } from '../../lib/cameraHelper';
+import { getCameraStream, stopMediaStream, applyCameraZoom, getCameraZoomCapabilities } from '../../lib/cameraHelper';
 import { validatePhotoInBrowser } from '../../lib/imageValidator';
 import { preprocessDocumentClientSide } from '../../lib/documentPreprocessor';
 import {
@@ -91,7 +91,17 @@ export function StepAddressProof() {
   const [cameraActive, setCameraActive] = useState(false);
   const [activeSide, setActiveSide] = useState(null); // 'front' | 'back'
   const [facingMode, setFacingMode] = useState('environment'); // Default back camera for document scanning
+  const [tempSnapshot, setTempSnapshot] = useState(null);
   const [streamReady, setStreamReady] = useState(false);
+  const [zoomCapabilities, setZoomCapabilities] = useState(null);
+  const [zoomLevel, setZoomLevel] = useState(1.0);
+
+  async function handleSetZoom(level) {
+    setZoomLevel(level);
+    if (streamRef.current) {
+      await applyCameraZoom(streamRef.current, level);
+    }
+  }
 
   // Submission State
   const [loading, setLoading] = useState(false);
@@ -109,13 +119,13 @@ export function StepAddressProof() {
   }, []);
 
   useEffect(() => {
-    if (cameraActive && streamRef.current && videoRef.current) {
+    if (cameraActive && !tempSnapshot && streamRef.current && videoRef.current) {
       videoRef.current.srcObject = streamRef.current;
       videoRef.current.play().catch((err) => {
         console.warn('Video autoplay failed:', err);
       });
     }
-  }, [cameraActive, streamReady]);
+  }, [cameraActive, streamReady, tempSnapshot]);
 
   // If initial existing files exist, validate them automatically
   useEffect(() => {
@@ -261,11 +271,16 @@ export function StepAddressProof() {
     stopCamera();
     setValidationError('');
     setActiveSide(side);
+    setTempSnapshot(null);
     setStreamReady(false);
 
     try {
       const stream = await getCameraStream(mode);
       streamRef.current = stream;
+
+      const caps = getCameraZoomCapabilities(stream);
+      setZoomCapabilities(caps);
+      setZoomLevel(caps?.supported ? caps.min : 1.0);
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -294,7 +309,10 @@ export function StepAddressProof() {
     }
     setCameraActive(false);
     setActiveSide(null);
+    setTempSnapshot(null);
     setStreamReady(false);
+    setZoomLevel(1.0);
+    setZoomCapabilities(null);
   }
 
   function toggleCamera() {
@@ -325,7 +343,23 @@ export function StepAddressProof() {
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL('image/jpeg', 0.90);
 
-    const sideCaptured = activeSide;
+    setTempSnapshot({
+      dataUrl,
+      side: activeSide
+    });
+  }
+
+  function handleRetakeInCamera() {
+    const side = activeSide;
+    setTempSnapshot(null);
+    if (side) {
+      startCameraForSide(side, facingMode);
+    }
+  }
+
+  async function handleUsePhotoFromCamera() {
+    if (!tempSnapshot || !tempSnapshot.dataUrl) return;
+    const { dataUrl, side } = tempSnapshot;
     stopCamera();
 
     let enhancedDataUrl = null;
@@ -341,13 +375,13 @@ export function StepAddressProof() {
       dataUrl: dataUrl,
       previewUrl: dataUrl,
       enhancedDataUrl: enhancedDataUrl,
-      name: `${docType.replace(/\s+/g, '_')}_${sideCaptured.toUpperCase()}_Photo.jpg`,
+      name: `${docType.replace(/\s+/g, '_')}_${side.toUpperCase()}_Photo.jpg`,
       size: Math.round((dataUrl.length * 3) / 4),
       type: 'image',
       isExisting: false
     };
 
-    if (sideCaptured === 'front') {
+    if (side === 'front') {
       setFrontDoc(docObj);
       triggerValidation(docObj, backDoc, docType);
     } else {
@@ -493,162 +527,231 @@ export function StepAddressProof() {
   );
 
   return (
-    <div className="emp-card">
-      <h2 className="emp-step-title">Upload Address Proof</h2>
-      <p className="emp-step-instruction">
-        Please provide both the <strong>FRONT</strong> and <strong>BACK</strong> sides of your address proof document. The system supports all available Indian languages (English, Hindi, Tamil, Telugu, Kannada, Malayalam) and automatically detects mixed-language documents.
-      </p>
-
-      {/* 1. Document Type Selector */}
-      <div className="form-group" style={{ marginBottom: '20px' }}>
-        <label className="form-label" style={{ fontWeight: 700 }}>
-          Document Type <span className="required">*</span>
-        </label>
-        <select
-          id="select-document-type"
-          className="form-control form-select"
-          value={docType}
-          onChange={(e) => handleDocTypeChange(e.target.value)}
-          disabled={cameraActive || loading || validatingSide}
-          style={{ fontSize: '0.96rem' }}
-        >
-          {docTypes.map((t) => (
-            <option key={t} value={t}>{t}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Hidden File Inputs */}
-      <input
-        ref={fileInputFrontRef}
-        type="file"
-        accept=".pdf,.jpg,.jpeg,.png,image/jpeg,image/png,application/pdf"
-        style={{ display: 'none' }}
-        onChange={(e) => handleFileSelection(e, 'front')}
-      />
-      <input
-        ref={fileInputBackRef}
-        type="file"
-        accept=".pdf,.jpg,.jpeg,.png,image/jpeg,image/png,application/pdf"
-        style={{ display: 'none' }}
-        onChange={(e) => handleFileSelection(e, 'back')}
-      />
-
-      {/* 2. Active Camera Viewfinder */}
+    <>
+      {/* Full-Screen Camera Overlay (Mobile & Desktop) */}
       {cameraActive && (
-        <div style={{
-          backgroundColor: '#0F172A',
-          borderRadius: 'var(--radius-md)',
-          padding: '16px',
-          marginBottom: '22px',
-          color: '#FFFFFF',
-          textAlign: 'center'
-        }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: '10px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, fontSize: '0.95rem' }}>
-              <Camera size={18} color="#38BDF8" />
-              <span>Capturing {activeSide === 'front' ? 'FRONT SIDE' : 'BACK SIDE'}</span>
+        <div className="fullscreen-camera-overlay" id={`fullscreen-camera-doc-${activeSide}`}>
+          {/* Top Bar */}
+          <div className="fullscreen-camera-topbar">
+            <div className="fullscreen-camera-title">
+              <FileText size={20} color="#38BDF8" />
+              <span>
+                {tempSnapshot
+                  ? `Review ${activeSide === 'front' ? 'Front Side' : 'Back Side'}`
+                  : `Capture ${activeSide === 'front' ? 'Front Side' : 'Back Side'}`}
+              </span>
             </div>
-            <button
-              type="button"
-              onClick={stopCamera}
-              className="btn btn-secondary btn-sm"
-              style={{ padding: '4px 8px', color: '#FFFFFF', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none' }}
-            >
-              <X size={16} />
-              <span>Cancel</span>
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {!tempSnapshot && (
+                <button
+                  type="button"
+                  className="camera-status-pill"
+                  onClick={toggleCamera}
+                  title="Switch Camera"
+                >
+                  <SwitchCamera size={14} />
+                  <span>{facingMode === 'user' ? 'Front' : 'Back'}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                className="fullscreen-camera-close-btn"
+                onClick={stopCamera}
+                title="Close Camera"
+              >
+                <X size={20} />
+              </button>
+            </div>
           </div>
 
-          <div style={{
-            position: 'relative',
-            width: '100%',
-            maxWidth: '480px',
-            margin: '0 auto 14px auto',
-            borderRadius: '8px',
-            overflow: 'hidden',
-            backgroundColor: '#000000',
-            aspectRatio: '4/3'
-          }}>
+          {/* Viewport: Live Stream OR Captured Photo */}
+          <div className="fullscreen-camera-viewport">
             <video
               ref={videoRef}
               autoPlay
               playsInline
               muted
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              className={`fullscreen-camera-video ${facingMode === 'user' ? 'mirrored' : ''}`}
+              style={{ display: !tempSnapshot ? 'block' : 'none' }}
             />
+            {tempSnapshot && (
+              <img
+                src={tempSnapshot.dataUrl}
+                alt="Captured Document Preview"
+                className="fullscreen-camera-preview-img"
+              />
+            )}
 
             {/* Document Guide Overlay */}
-            <div style={{
-              position: 'absolute',
-              top: '10%',
-              left: '8%',
-              right: '8%',
-              bottom: '10%',
-              border: '2px dashed rgba(56, 189, 248, 0.8)',
-              borderRadius: '6px',
-              pointerEvents: 'none',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.4)'
-            }}>
-              <span style={{
-                color: '#38BDF8',
-                backgroundColor: 'rgba(0,0,0,0.65)',
-                padding: '4px 10px',
-                borderRadius: '4px',
-                fontSize: '0.78rem',
-                fontWeight: 600
+            {!tempSnapshot && (
+              <div style={{
+                position: 'absolute',
+                top: '12%',
+                left: '6%',
+                right: '6%',
+                bottom: '15%',
+                border: '2px dashed rgba(56, 189, 248, 0.85)',
+                borderRadius: '8px',
+                pointerEvents: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.45)'
               }}>
-                Align {activeSide === 'front' ? 'Front' : 'Back'} within frame
-              </span>
-            </div>
+                <span style={{
+                  color: '#FFFFFF',
+                  backgroundColor: 'rgba(0,0,0,0.7)',
+                  padding: '6px 14px',
+                  borderRadius: '20px',
+                  fontSize: '0.82rem',
+                  fontWeight: 600
+                }}>
+                  Align {activeSide === 'front' ? 'Front' : 'Back'} within frame
+                </span>
+              </div>
+            )}
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={takeSnapshot}
-              className="btn btn-primary"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '10px 24px',
-                fontSize: '1rem',
-                fontWeight: 700
-              }}
-            >
-              <Camera size={20} />
-              <span>Capture Photo</span>
-            </button>
+          {/* Bottom Bar: Shutter OR Retake & Use Photo Controls */}
+          <div className="fullscreen-camera-bottombar">
+            {!tempSnapshot ? (
+              <>
+                {zoomCapabilities?.supported && zoomCapabilities.max > zoomCapabilities.min && (
+                  <div className="fullscreen-camera-zoom-bar">
+                    {zoomCapabilities.min <= 0.65 && (
+                      <button
+                        type="button"
+                        id={`btn-zoom-05-doc-${activeSide}`}
+                        className={`zoom-preset-btn ${Math.abs(zoomLevel - zoomCapabilities.min) < 0.12 ? 'active' : ''}`}
+                        onClick={() => handleSetZoom(zoomCapabilities.min)}
+                        title={`${zoomCapabilities.min <= 0.55 ? '0.5x' : `${zoomCapabilities.min}x`} Ultra-Wide View`}
+                      >
+                        {zoomCapabilities.min <= 0.55 ? '0.5x' : `${zoomCapabilities.min}x`}
+                      </button>
+                    )}
+                    {zoomCapabilities.min <= 1.0 && zoomCapabilities.max >= 1.0 && (
+                      <button
+                        type="button"
+                        id={`btn-zoom-1-doc-${activeSide}`}
+                        className={`zoom-preset-btn ${Math.abs(zoomLevel - 1.0) < 0.15 ? 'active' : ''}`}
+                        onClick={() => handleSetZoom(1.0)}
+                        title="1x Natural View"
+                      >
+                        1x
+                      </button>
+                    )}
+                    {zoomCapabilities.max >= 2.0 && (
+                      <button
+                        type="button"
+                        id={`btn-zoom-2-doc-${activeSide}`}
+                        className={`zoom-preset-btn ${Math.abs(zoomLevel - 2.0) < 0.2 ? 'active' : ''}`}
+                        onClick={() => handleSetZoom(2.0)}
+                        title="2x Zoom View"
+                      >
+                        2x
+                      </button>
+                    )}
+                  </div>
+                )}
 
-            <button
-              type="button"
-              onClick={toggleCamera}
-              className="btn btn-secondary"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                backgroundColor: 'rgba(255,255,255,0.2)',
-                color: '#FFFFFF',
-                border: 'none'
-              }}
-              title="Flip camera"
-            >
-              <SwitchCamera size={18} />
-              <span>Flip Camera</span>
-            </button>
+                <div className="fullscreen-camera-controls-row">
+                <button
+                  id={`btn-switch-camera-doc-${activeSide}`}
+                  type="button"
+                  className="btn-camera-flip"
+                  onClick={toggleCamera}
+                  title={facingMode === 'user' ? 'Switch to Back Camera' : 'Switch to Front Camera'}
+                >
+                  <SwitchCamera size={22} />
+                </button>
+
+                <button
+                  id={`btn-snap-doc-${activeSide}`}
+                  type="button"
+                  className="btn-snap"
+                  onClick={takeSnapshot}
+                  title={`Capture ${activeSide === 'front' ? 'Front' : 'Back'} Photo`}
+                >
+                  <div className="btn-snap-inner" />
+                </button>
+
+                <button
+                  type="button"
+                  className="btn-camera-close"
+                  onClick={stopCamera}
+                  title="Close Camera"
+                >
+                  <X size={22} />
+                </button>
+              </div>
+              </>
+            ) : (
+              <div className="fullscreen-review-actions">
+                <button
+                  id="btn-camera-retake-doc"
+                  type="button"
+                  className="btn-camera-retake"
+                  onClick={handleRetakeInCamera}
+                >
+                  <RefreshCw size={18} />
+                  <span>Retake</span>
+                </button>
+
+                <button
+                  id="btn-camera-use-doc"
+                  type="button"
+                  className="btn-camera-use"
+                  onClick={handleUsePhotoFromCamera}
+                >
+                  <CheckCircle2 size={20} />
+                  <span>Use Photo ✓</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
+
+      <div className="emp-card">
+        <h2 className="emp-step-title">Capture / Upload Employee Address Proof</h2>
+        <p className="emp-step-instruction">
+          As Team Leader, capture or upload both the <strong>FRONT</strong> and <strong>BACK</strong> sides of the employee's valid address proof document. The system supports all available Indian languages (English, Hindi, Tamil, Telugu, Kannada, Malayalam) and automatically detects mixed-language documents.
+        </p>
+
+        {/* 1. Document Type Selector */}
+        <div className="form-group" style={{ marginBottom: '20px' }}>
+          <label className="form-label" style={{ fontWeight: 700 }}>
+            Document Type <span className="required">*</span>
+          </label>
+          <select
+            id="select-document-type"
+            className="form-control form-select"
+            value={docType}
+            onChange={(e) => handleDocTypeChange(e.target.value)}
+            disabled={cameraActive || loading || validatingSide}
+            style={{ fontSize: '0.96rem' }}
+          >
+            {docTypes.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Hidden File Inputs */}
+        <input
+          ref={fileInputFrontRef}
+          type="file"
+          accept=".pdf,.jpg,.jpeg,.png,image/jpeg,image/png,application/pdf"
+          style={{ display: 'none' }}
+          onChange={(e) => handleFileSelection(e, 'front')}
+        />
+        <input
+          ref={fileInputBackRef}
+          type="file"
+          accept=".pdf,.jpg,.jpeg,.png,image/jpeg,image/png,application/pdf"
+          style={{ display: 'none' }}
+          onChange={(e) => handleFileSelection(e, 'back')}
+        />
 
       {/* 3. Document Sections: FRONT SIDE & BACK SIDE */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '20px' }}>
@@ -1529,5 +1632,6 @@ export function StepAddressProof() {
         </button>
       </div>
     </div>
-  );
+  </>
+);
 }

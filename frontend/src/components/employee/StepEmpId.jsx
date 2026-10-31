@@ -97,7 +97,7 @@ export function StepEmpId() {
         setStatusNotice({
           type: 'verified',
           title: 'Already Verified',
-          message: data.message || 'Your address verification has already been completed.',
+          message: data.message || `Address verification for employee ${data.employeeName || ''} (${data.employeeId || ''}) has already been completed.`,
           name: data.employeeName,
           id: data.employeeId,
           tlName: validatedTl.tlName
@@ -110,7 +110,7 @@ export function StepEmpId() {
         setStatusNotice({
           type: 'submitted',
           title: 'Verification Under Review',
-          message: data.message || 'Your address verification has already been submitted and is under review.',
+          message: data.message || `Address verification for employee ${data.employeeName || ''} (${data.employeeId || ''}) has already been submitted and is currently awaiting HR/BGV review.`,
           name: data.employeeName,
           id: data.employeeId,
           tlName: validatedTl.tlName
@@ -328,12 +328,12 @@ export function StepEmpId() {
           {stage === 'TL' ? <ShieldCheck size={30} /> : <UserCheck size={30} />}
         </div>
         <h2 className="emp-step-title" style={{ color: 'var(--emp-title-color)', fontWeight: 800 }}>
-          {stage === 'TL' ? 'Enter TL Employee ID' : 'Enter Agent Employee ID'}
+          {stage === 'TL' ? 'Enter TL Employee ID' : 'Enter Employee ID to Verify'}
         </h2>
         <p className="emp-step-instruction" style={{ color: '#475569', fontSize: '0.92rem' }}>
           {stage === 'TL'
-            ? 'First, enter the authorized Team Leader (TL) ID to initiate verification.'
-            : `Enter the Employee ID of the agent assigned under TL ${validatedTl?.tlName || ''}.`}
+            ? 'First, enter your authorized Team Leader (TL) ID to initiate the physical verification visit.'
+            : `Enter the Employee ID of the employee assigned to you (TL ${validatedTl?.tlName || ''}) for physical residence verification.`}
         </p>
       </div>
 
@@ -392,7 +392,7 @@ export function StepEmpId() {
             borderRadius: 'var(--radius-full)',
             marginBottom: '18px'
           }}>
-            Agent: <span style={{ color: '#4338CA' }}>{statusNotice.name}</span> ({statusNotice.id})
+            Employee: <span style={{ color: '#4338CA' }}>{statusNotice.name}</span> ({statusNotice.id})
           </div>
           <div>
             <button
@@ -410,7 +410,7 @@ export function StepEmpId() {
               }}
             >
               <RotateCcw size={16} />
-              <span>Verify Another Agent</span>
+              <span>Verify Another Employee</span>
             </button>
           </div>
         </div>
@@ -544,7 +544,7 @@ export function StepEmpId() {
 
           <div className="form-group" style={{ marginBottom: '20px' }}>
             <label className="form-label" htmlFor="agent-id-input" style={{ fontSize: '0.98rem', fontWeight: 700 }}>
-              Agent Employee ID
+              Employee ID (Person Being Verified)
             </label>
             <input
               id="agent-id-input"
@@ -569,7 +569,7 @@ export function StepEmpId() {
               disabled={loading}
             />
             <span className="form-hint" style={{ textAlign: 'center' }}>
-              Example format: COL00125
+              Enter the Employee ID of the employee whose residence you are visiting (e.g. COL00101)
             </span>
           </div>
 

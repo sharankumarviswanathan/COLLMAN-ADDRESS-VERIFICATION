@@ -111,7 +111,7 @@ export function ImageValidationFeedback({
             border: '1px solid #FECACA'
           }}
         >
-          <span>⚠️ Mandatory validation failed. Manual confirmation is disabled. You must retake the photo.</span>
+          <span>⚠️ Mandatory validation failed. As Team Leader, please position yourself and the employee correctly and retake the photo.</span>
         </div>
       </div>
     );

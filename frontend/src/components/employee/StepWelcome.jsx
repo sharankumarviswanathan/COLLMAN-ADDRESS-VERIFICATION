@@ -60,12 +60,14 @@ export function StepWelcome() {
         lineHeight: 1.6,
         boxShadow: '0 2px 8px rgba(0, 0, 0, 0.03)'
       }}>
-        <p style={{ marginBottom: '8px', color: '#0F172A', fontWeight: 800, fontSize: '0.96rem' }}>
-          Welcome to Collman Services Address Verification.
+        <p style={{ marginBottom: '10px', color: '#0F172A', fontWeight: 800, fontSize: '0.98rem' }}>
+          Team Leader Physical Address Verification Visit
         </p>
-        <p style={{ marginBottom: '14px', color: '#334155', lineHeight: 1.55 }}>
-          Please keep your <strong style={{ color: '#0F172A' }}>TL Employee ID</strong> and <strong style={{ color: '#0F172A' }}>Agent Employee ID</strong> ready and complete the verification while you are available at your <strong style={{ color: '#0F172A' }}>current residence</strong>.
+        <p style={{ marginBottom: '14px', color: '#1E293B', fontWeight: 600, lineHeight: 1.55 }}>
+          You are performing an employee address verification visit as an authorized Team Leader. Visit the employee's registered residential address and capture all required evidence.
         </p>
+
+
         <div style={{
           display: 'inline-flex',
           alignItems: 'center',
@@ -79,7 +81,7 @@ export function StepWelcome() {
           fontSize: '0.85rem'
         }}>
           <Clock size={16} color="#06541F" strokeWidth={2.4} />
-          <span>This process will take only 3–5 minutes.</span>
+          <span>Keep your TL ID and Employee ID ready. Visit takes ~3–5 minutes.</span>
         </div>
       </div>
 

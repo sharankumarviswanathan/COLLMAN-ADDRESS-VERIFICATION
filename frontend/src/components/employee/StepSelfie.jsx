@@ -3,9 +3,10 @@ import { useVerification } from '../../context/VerificationContext';
 import { api } from '../../api/client';
 import { capturePhotoLocation } from '../../lib/photoLocation';
 import { validatePhotoWithAi } from '../../lib/imageValidator';
-import { getCameraStream, stopMediaStream } from '../../lib/cameraHelper';
+import { getCameraStream, stopMediaStream, getCameraZoomCapabilities, applyCameraZoom } from '../../lib/cameraHelper';
 import { normalizeCapturedImage, computeImageSignature } from '../../lib/imageNormalizer';
 import { ImageValidationFeedback } from './ImageValidationFeedback';
+import FullscreenCameraModal from './FullscreenCameraModal';
 import {
   Camera,
   CheckCircle2,
@@ -21,7 +22,8 @@ import {
 export function StepSelfie() {
   const { progress, updateProgress, nextStep, prevStep } = useVerification();
   const [cameraActive, setCameraActive] = useState(false);
-  const [facingMode, setFacingMode] = useState('user'); // front camera default for selfie
+  const [facingMode, setFacingMode] = useState('environment'); // default rear camera for employee photo
+  const [tempSnapshot, setTempSnapshot] = useState(null);
   const [previewImg, setPreviewImg] = useState(progress.selfieUrl || null);
   const [photoCoords, setPhotoCoords] = useState(
     progress.selfieCoords || (progress.selfieLatitude ? {
@@ -36,6 +38,15 @@ export function StepSelfie() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [streamReady, setStreamReady] = useState(false);
+  const [zoomCapabilities, setZoomCapabilities] = useState(null);
+  const [zoomLevel, setZoomLevel] = useState(1.0);
+
+  async function handleSetZoom(level) {
+    setZoomLevel(level);
+    if (streamRef.current) {
+      await applyCameraZoom(streamRef.current, level);
+    }
+  }
 
   // Validation state: always starts as null to force validation from scratch
   const [validating, setValidating] = useState(false);
@@ -96,24 +107,29 @@ export function StepSelfie() {
     return () => { isMounted = false; };
   }, [previewImg, cameraActive]);
 
-  // When cameraActive changes, ensure the video srcObject is attached and playing
+  // When cameraActive changes or tempSnapshot changes, ensure the video srcObject is attached and playing
   useEffect(() => {
-    if (cameraActive && streamRef.current && videoRef.current) {
+    if (cameraActive && !tempSnapshot && streamRef.current && videoRef.current) {
       videoRef.current.srcObject = streamRef.current;
       videoRef.current.play().catch((err) => {
         console.warn('Video autoplay failed, user gesture needed:', err);
       });
     }
-  }, [cameraActive, streamReady]);
+  }, [cameraActive, streamReady, tempSnapshot]);
 
   async function startCamera(mode = facingMode) {
     stopCamera();
     setErrorMsg('');
     setStreamReady(false);
+    setTempSnapshot(null);
 
     try {
       const stream = await getCameraStream(mode);
       streamRef.current = stream;
+
+      const caps = getCameraZoomCapabilities(stream);
+      setZoomCapabilities(caps);
+      setZoomLevel(caps?.supported ? caps.min : 1.0);
 
       // Attach immediately to video element
       if (videoRef.current) {
@@ -131,7 +147,7 @@ export function StepSelfie() {
       console.warn('Camera stream failed:', err);
       setCameraActive(false);
        setErrorMsg(
-        'Unable to access camera. Please allow camera permissions in your browser to take a live selfie.'
+        'Unable to access camera. Please allow camera permissions in your browser to capture the employee live photo.'
       );
     }
   }
@@ -147,7 +163,7 @@ export function StepSelfie() {
   }
 
   function toggleCamera() {
-    const newMode = facingMode === 'user' ? 'environment' : 'user';
+    const newMode = facingMode === 'environment' ? 'user' : 'environment';
     setFacingMode(newMode);
     startCamera(newMode);
   }
@@ -157,8 +173,6 @@ export function StepSelfie() {
     const video = videoRef.current;
 
     isCapturingRef.current = true;
-    setValidating(true);
-    setValidationResult(null);
     setErrorMsg('');
 
     try {
@@ -174,46 +188,30 @@ export function StepSelfie() {
         quality: 0.90
       });
 
-      stopCamera();
-      setPreviewImg(normalized.dataUrl);
-
-      // 3. Perform automated quality & content validation on the exact normalized image
-      const val = await validatePhotoWithAi(normalized.dataUrl, 'selfie');
-      const safeVal = val && typeof val === 'object' ? val : {
-        valid: false,
-        error: 'Unable to analyze photo. Please retake the photo.',
-        checks: {
-          clarity: { passed: false, message: 'Check failed' },
-          lighting: { passed: false, message: 'Check failed' },
-          visibility: { passed: false, message: 'Check failed' },
-          content: { passed: false, message: 'Check failed' }
-        }
-      };
-
-      // Lock validation result specifically to this normalized image signature
-      safeVal.imageSignature = normalized.imageSignature;
-      setValidationResult(safeVal);
-      if (!safeVal.valid) {
-        setErrorMsg(safeVal.error || 'Live selfie validation failed. Please retake the photo.');
-      }
+      // Keep full-screen camera open in review mode with Retake and Use Photo buttons
+      setTempSnapshot(normalized);
     } catch (vErr) {
-      console.warn('Snapshot normalization or validation error:', vErr);
-      const failVal = {
-        valid: false,
-        error: 'Unable to analyze photo. Please retake the photo.',
-        checks: {
-          clarity: { passed: false, message: 'Check failed' },
-          lighting: { passed: false, message: 'Check failed' },
-          visibility: { passed: false, message: 'Check failed' },
-          content: { passed: false, message: 'Check failed' }
-        }
-      };
-      setValidationResult(failVal);
-      setErrorMsg('Unable to analyze photo. Please retake the photo.');
+      console.warn('Snapshot normalization or capture error:', vErr);
+      setErrorMsg('Unable to capture photo. Please try again.');
     } finally {
-      setValidating(false);
       isCapturingRef.current = false;
     }
+  }
+
+  function handleRetakeInCamera() {
+    setTempSnapshot(null);
+    startCamera(facingMode);
+  }
+
+  function handleUsePhotoFromCamera() {
+    if (!tempSnapshot) return;
+    const captured = tempSnapshot;
+    stopCamera();
+    setCameraActive(false);
+    setTempSnapshot(null);
+    setValidationResult(null);
+    setErrorMsg('');
+    setPreviewImg(captured.dataUrl);
   }
 
   async function handleConfirmPhoto() {
@@ -266,98 +264,71 @@ export function StepSelfie() {
   const canProceed = Boolean(previewImg && validationResult && validationResult.valid === true && !validating && !loading);
 
   return (
-    <div className="emp-card">
-      <h2 className="emp-step-title">Take Your Selfie</h2>
-      <p className="emp-step-instruction">
-        Please capture a clear photo of your face while looking directly at the camera.
-      </p>
+    <>
+      {/* Full-Screen Camera Overlay (Mobile & Desktop) */}
+      <FullscreenCameraModal
+        isOpen={cameraActive}
+        title="Capture Employee Selfie"
+        icon={Camera}
+        guidanceText="Frame employee face clearly"
+        videoRef={videoRef}
+        tempSnapshot={tempSnapshot}
+        facingMode={facingMode}
+        onToggleCamera={toggleCamera}
+        onClose={() => {
+          stopCamera();
+          setTempSnapshot(null);
+        }}
+        onCapture={takeSnapshot}
+        onRetake={handleRetakeInCamera}
+        onUsePhoto={handleUsePhotoFromCamera}
+        zoomCapabilities={zoomCapabilities}
+        zoomLevel={zoomLevel}
+        onSetZoom={handleSetZoom}
+      />
 
-      {/* Viewfinder / Preview Frame */}
-      <div className="camera-viewfinder-box">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className={`camera-video ${facingMode === 'user' ? 'mirrored' : ''}`}
-          style={{
-            display: cameraActive ? 'block' : 'none'
-          }}
-        />
+      {/* Main Verification Page Card */}
+      <div className="emp-card">
+        <h2 className="emp-step-title">Capture Employee Live Selfie</h2>
+        <p className="emp-step-instruction">
+          Capture a clear live photo of the employee for identity verification.
+        </p>
 
-        {/* Compact Camera Status Pill (Top-left overlay) */}
-        {cameraActive && (
-          <button
-            type="button"
-            className="camera-status-pill"
-            onClick={toggleCamera}
-            title="Tap to switch camera"
-            aria-label="Switch Camera"
-          >
-            <span className="camera-status-dot" />
-            <SwitchCamera size={13} />
-            <span>{facingMode === 'user' ? 'Front Camera' : 'Back Camera'}</span>
-          </button>
-        )}
+        {/* TL Photo Guidance Box */}
+        <div style={{
+          backgroundColor: '#F8FAFC',
+          border: '1px solid #E2E8F0',
+          borderRadius: 'var(--radius-sm)',
+          padding: '10px 14px',
+          marginBottom: '14px',
+          fontSize: '0.82rem',
+          lineHeight: 1.5,
+          color: '#334155'
+        }}>
+          <div><strong>• What to photograph:</strong> Live photo of the employee being verified.</div>
+          <div><strong>• Where to stand:</strong> Stand facing the employee at eye level with adequate, even lighting.</div>
+          <div><strong>• Requirement:</strong> Employee's full frontal face must be in clear focus, looking at the camera. No face masks, sunglasses, hats, or digital screens.</div>
+        </div>
 
-        {/* Live Camera Controls Overlay */}
-        {cameraActive && (
-          <div className="camera-controls-bar">
-            <button
-              id="btn-switch-camera-selfie"
-              type="button"
-              className="btn-camera-flip"
-              onClick={toggleCamera}
-              title={facingMode === 'user' ? 'Switch to Back Camera' : 'Switch to Front Camera'}
-              aria-label="Switch Camera"
-            >
-              <SwitchCamera size={20} />
-            </button>
-
-            <button
-              id="btn-snap-selfie"
-              type="button"
-              className="btn-snap"
-              onClick={takeSnapshot}
-              title="Capture Photo"
-              aria-label="Capture Photo"
-            >
-              <div className="btn-snap-inner" />
-            </button>
-
-            <button
-              type="button"
-              className="btn-camera-close"
-              onClick={stopCamera}
-              title="Close Camera"
-              aria-label="Close Camera"
-            >
-              <X size={20} />
-            </button>
-          </div>
-        )}
-
-        {/* Static Preview Mode if snapshot or upload taken */}
-        {!cameraActive && previewImg && (
-          <div className="camera-preview-img-wrapper">
-            <img
-              src={previewImg}
-              alt="Selfie Preview"
-            />
-            <div className="camera-captured-badge">
-              Captured Preview
+        {/* Static Framed Preview or Empty State */}
+        <div className="camera-viewfinder-box" style={{ maxHeight: '360px' }}>
+          {previewImg ? (
+            <div className="camera-preview-img-wrapper">
+              <img
+                src={previewImg}
+                alt="Selfie Preview"
+              />
+              <div className="camera-captured-badge">
+                Captured Preview
+              </div>
             </div>
-          </div>
-        )}
-
-        {/* Default Empty State */}
-        {!cameraActive && !previewImg && (
-          <div className="camera-empty-state">
-            <Camera size={56} style={{ margin: '0 auto 12px auto', opacity: 0.85 }} />
-            <p style={{ fontSize: '0.92rem', color: '#CBD5E1' }}>Tap below to open camera & take selfie</p>
-          </div>
-        )}
-      </div>
+          ) : (
+            <div className="camera-empty-state">
+              <Camera size={56} style={{ margin: '0 auto 12px auto', opacity: 0.85 }} />
+              <p style={{ fontSize: '0.92rem', color: '#CBD5E1' }}>Tap below to open camera & capture employee selfie</p>
+            </div>
+          )}
+        </div>
 
       {/* Real-Time Automated Quality & Content Validation Feedback */}
       <ImageValidationFeedback
@@ -414,7 +385,7 @@ export function StepSelfie() {
             onClick={() => startCamera('user')}
           >
             <Camera size={20} />
-            <span>Open Camera & Take Selfie</span>
+            <span>Open Camera & Capture Employee Selfie</span>
           </button>
         </div>
       )}
@@ -541,5 +512,6 @@ export function StepSelfie() {
         </button>
       </div>
     </div>
-  );
+  </>
+);
 }

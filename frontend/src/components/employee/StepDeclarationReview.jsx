@@ -4,7 +4,7 @@ import { api } from '../../api/client';
 import { CheckCircle2, AlertCircle, ArrowRight, ArrowLeft, ShieldCheck, CheckSquare, Square } from 'lucide-react';
 
 export function StepDeclarationReview() {
-  const { progress, updateProgress, setStep, setSubmissionResult, nextStep, prevStep } = useVerification();
+  const { employee, progress, updateProgress, setStep, setSubmissionResult, nextStep, prevStep } = useVerification();
   const [confirmed, setConfirmed] = useState(progress.declarationAccepted || false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -28,7 +28,7 @@ export function StepDeclarationReview() {
 
   async function handleFinalSubmit() {
     if (!confirmed) {
-      setErrorMsg('Please accept the declaration to submit your verification.');
+      setErrorMsg('Please accept the Team Leader physical visit declaration to submit the verification.');
       return;
     }
 
@@ -60,9 +60,9 @@ export function StepDeclarationReview() {
 
   return (
     <div className="emp-card">
-      <h2 className="emp-step-title">Review Your Verification</h2>
+      <h2 className="emp-step-title">Review Verification Evidence</h2>
       <p className="emp-step-instruction">
-        Please review your verification checklist and accept the declaration before final submission.
+        As Team Leader, review the completed evidence checklist for this employee residence visit and confirm the verification before final submission.
       </p>
 
       {/* Checklist */}
@@ -117,11 +117,11 @@ export function StepDeclarationReview() {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: 'var(--emp-title-color)', marginBottom: '8px', fontSize: '1rem' }}>
           <ShieldCheck size={20} color="var(--emp-subtitle-color)" />
-          <span>Employee Declaration</span>
+          <span>Team Leader Physical Verification Declaration</span>
         </div>
 
         <p style={{ fontSize: '0.9rem', color: '#334155', lineHeight: 1.6, marginBottom: '16px' }}>
-          "I confirm that the information, location, photographs and documents submitted by me for employee address verification are accurate to the best of my knowledge."
+          "I, as the authorized Team Leader, confirm that I have physically visited the employee's residential address, verified the identity of the employee in person, and captured all required GPS location and photo evidence on site. All submitted evidence is genuine and accurate."
         </p>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontWeight: 700, fontSize: '0.95rem', color: 'var(--emp-title-color)' }}>
@@ -135,7 +135,7 @@ export function StepDeclarationReview() {
             }}
             style={{ width: 20, height: 20, cursor: 'pointer', accentColor: 'var(--emp-c2)' }}
           />
-          <span>I Confirm and Agree</span>
+          <span>I Confirm Physical Visit &amp; Evidence Accuracy</span>
         </label>
       </div>
 
@@ -191,11 +191,11 @@ export function StepDeclarationReview() {
       {/* Confirmation Modal */}
       {showConfirmModal && (
         <div className="modal-backdrop">
-          <div className="modal-content" style={{ maxWidth: '420px', textAlign: 'center', padding: '24px' }}>
+          <div className="modal-content" style={{ maxWidth: '440px', textAlign: 'center', padding: '24px' }}>
             <ShieldCheck size={50} color="var(--primary)" style={{ margin: '0 auto 12px auto' }} />
             <h3 style={{ fontSize: '1.25rem', marginBottom: '10px' }}>Confirm Submission</h3>
             <p style={{ fontSize: '0.92rem', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: 1.5 }}>
-              Are you sure you want to submit your address verification to Collman Services?
+              Are you sure you want to submit the address verification evidence for employee <strong>{employee?.employeeName || 'the employee'}</strong> {employee?.employeeId ? `(${employee.employeeId})` : ''}? Once submitted, the case will be forwarded for HR/BGV review.
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>

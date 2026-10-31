@@ -15,16 +15,16 @@ export function StepAddress() {
   const [errorMsg, setErrorMsg] = useState('');
 
   const reasons = [
-    'I have shifted to another address',
-    'Address submitted earlier is incorrect',
-    'I am temporarily staying at another address',
+    'Employee has shifted to another address',
+    'Address on HR record is incorrect',
+    'Employee is temporarily residing at another address',
     'Other'
   ];
 
   async function handleSave() {
     if (!isSame) {
       if (!newAddressText.trim()) {
-        setErrorMsg('Please enter your current residential address.');
+        setErrorMsg("Please enter the employee's current residential address.");
         return;
       }
     }
@@ -61,9 +61,9 @@ export function StepAddress() {
 
   return (
     <div className="emp-card">
-      <h2 className="emp-step-title">Confirm Your Current Address</h2>
+      <h2 className="emp-step-title">Confirm Employee Residential Address</h2>
       <p className="emp-step-instruction">
-        Please check if the residential address registered with HR is your current residence.
+        As Team Leader, check whether the registered HR residential address matches the physical residence where you are conducting the visit.
       </p>
 
       {/* HR Address Box */}
@@ -85,7 +85,7 @@ export function StepAddress() {
 
       <div style={{ marginBottom: '20px' }}>
         <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--emp-title-color)', marginBottom: '12px' }}>
-          Is this your current address?
+          Is the employee currently residing at this address?
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
@@ -165,7 +165,7 @@ export function StepAddress() {
               <input
                 type="text"
                 className="form-control"
-                placeholder="Type your reason..."
+                placeholder="Type specific reason..."
                 value={otherReasonText}
                 onChange={(e) => setOtherReasonText(e.target.value)}
               />
@@ -174,7 +174,7 @@ export function StepAddress() {
 
           <div className="form-group" style={{ marginTop: '14px' }}>
             <label className="form-label">
-              Your Current / Correct Address <span className="required">*</span>
+              Employee's Current / Physical Address <span className="required">*</span>
             </label>
             <textarea
               className="form-control"

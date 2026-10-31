@@ -3,9 +3,10 @@ import { useVerification } from '../../context/VerificationContext';
 import { api } from '../../api/client';
 import { capturePhotoLocation } from '../../lib/photoLocation';
 import { validatePhotoWithAi } from '../../lib/imageValidator';
-import { getCameraStream, stopMediaStream } from '../../lib/cameraHelper';
+import { getCameraStream, stopMediaStream, getCameraZoomCapabilities, applyCameraZoom } from '../../lib/cameraHelper';
 import { normalizeCapturedImage, computeImageSignature } from '../../lib/imageNormalizer';
 import { ImageValidationFeedback } from './ImageValidationFeedback';
+import FullscreenCameraModal from './FullscreenCameraModal';
 import {
   Signpost,
   Camera,
@@ -23,6 +24,7 @@ export function StepStreetPhoto() {
   const { employee, progress, updateProgress, nextStep, prevStep } = useVerification();
   const [cameraActive, setCameraActive] = useState(false);
   const [facingMode, setFacingMode] = useState('environment'); // default rear camera for street board
+  const [tempSnapshot, setTempSnapshot] = useState(null);
   const [previewImg, setPreviewImg] = useState(progress.streetPhotoUrl || null);
   const [photoCoords, setPhotoCoords] = useState(
     progress.streetPhotoCoords || (progress.streetPhotoLatitude ? {
@@ -37,6 +39,15 @@ export function StepStreetPhoto() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [streamReady, setStreamReady] = useState(false);
+  const [zoomCapabilities, setZoomCapabilities] = useState(null);
+  const [zoomLevel, setZoomLevel] = useState(1.0);
+
+  async function handleSetZoom(level) {
+    setZoomLevel(level);
+    if (streamRef.current) {
+      await applyCameraZoom(streamRef.current, level);
+    }
+  }
 
   // Validation state: always starts as null to force validation from scratch
   const [validating, setValidating] = useState(false);
@@ -97,24 +108,29 @@ export function StepStreetPhoto() {
     return () => { isMounted = false; };
   }, [previewImg, cameraActive, employee?.hrAddress]);
 
-  // When cameraActive changes, ensure the video srcObject is attached and playing
+  // When cameraActive changes or tempSnapshot changes, ensure the video srcObject is attached and playing
   useEffect(() => {
-    if (cameraActive && streamRef.current && videoRef.current) {
+    if (cameraActive && !tempSnapshot && streamRef.current && videoRef.current) {
       videoRef.current.srcObject = streamRef.current;
       videoRef.current.play().catch((err) => {
         console.warn('Video autoplay failed, user gesture needed:', err);
       });
     }
-  }, [cameraActive, streamReady]);
+  }, [cameraActive, streamReady, tempSnapshot]);
 
   async function startCamera(mode = facingMode) {
     stopCamera();
     setErrorMsg('');
     setStreamReady(false);
+    setTempSnapshot(null);
 
     try {
       const stream = await getCameraStream(mode);
       streamRef.current = stream;
+
+      const caps = getCameraZoomCapabilities(stream);
+      setZoomCapabilities(caps);
+      setZoomLevel(caps?.supported ? caps.min : 1.0);
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -131,7 +147,7 @@ export function StepStreetPhoto() {
       console.warn('Camera stream failed:', err);
       setCameraActive(false);
       setErrorMsg(
-        'Unable to access camera. Please allow camera permissions in your browser to take a street board photo.'
+        'Unable to access camera. Please allow camera permissions in your browser to capture the street board photo.'
       );
     }
   }
@@ -157,8 +173,6 @@ export function StepStreetPhoto() {
     const video = videoRef.current;
 
     isCapturingRef.current = true;
-    setValidating(true);
-    setValidationResult(null);
     setErrorMsg('');
 
     try {
@@ -174,46 +188,30 @@ export function StepStreetPhoto() {
         quality: 0.90
       });
 
-      stopCamera();
-      setPreviewImg(normalized.dataUrl);
-
-      // 3. Perform automated quality and OCR validation on the exact normalized image
-      const val = await validatePhotoWithAi(normalized.dataUrl, 'street', employee?.hrAddress || '');
-      const safeVal = val && typeof val === 'object' ? val : {
-        valid: false,
-        error: 'Unable to analyze photo. Please retake the photo.',
-        checks: {
-          clarity: { passed: false, message: 'Check failed' },
-          lighting: { passed: false, message: 'Check failed' },
-          visibility: { passed: false, message: 'Check failed' },
-          content: { passed: false, message: 'Check failed' }
-        }
-      };
-
-      // Lock validation result specifically to this normalized image signature
-      safeVal.imageSignature = normalized.imageSignature;
-      setValidationResult(safeVal);
-      if (!safeVal.valid) {
-        setErrorMsg(safeVal.error || 'Street board not detected or street name is not readable. Please retake the photo.');
-      }
+      // Keep full-screen camera open in review mode with Retake and Use Photo buttons
+      setTempSnapshot(normalized);
     } catch (vErr) {
-      console.error('Street board validation error:', vErr);
-      const failVal = {
-        valid: false,
-        error: 'Unable to analyze photo. Please retake the photo.',
-        checks: {
-          clarity: { passed: false, message: 'Check failed' },
-          lighting: { passed: false, message: 'Check failed' },
-          visibility: { passed: false, message: 'Check failed' },
-          content: { passed: false, message: 'Check failed' }
-        }
-      };
-      setValidationResult(failVal);
-      setErrorMsg('Unable to analyze photo. Please retake the photo.');
+      console.warn('Snapshot capture or normalization error:', vErr);
+      setErrorMsg('Unable to capture photo. Please try again.');
     } finally {
-      setValidating(false);
       isCapturingRef.current = false;
     }
+  }
+
+  function handleRetakeInCamera() {
+    setTempSnapshot(null);
+    startCamera(facingMode);
+  }
+
+  function handleUsePhotoFromCamera() {
+    if (!tempSnapshot) return;
+    const captured = tempSnapshot;
+    stopCamera();
+    setCameraActive(false);
+    setTempSnapshot(null);
+    setValidationResult(null);
+    setErrorMsg('');
+    setPreviewImg(captured.dataUrl);
   }
 
   async function handleConfirmPhoto() {
@@ -266,98 +264,71 @@ export function StepStreetPhoto() {
   const canProceed = Boolean(previewImg && validationResult && validationResult.valid === true && !validating && !loading);
 
   return (
-    <div className="emp-card">
-      <h2 className="emp-step-title">Take Street Board Photo</h2>
-      <p className="emp-step-instruction">
-        Please capture a clear photo of your street name board, lane sign, or road signage near your residence.
-      </p>
+    <>
+      {/* Full-Screen Camera Overlay (Mobile & Desktop) */}
+      <FullscreenCameraModal
+        isOpen={cameraActive}
+        title="Capture Street Board"
+        icon={Signpost}
+        guidanceText="Frame the street board clearly"
+        videoRef={videoRef}
+        tempSnapshot={tempSnapshot}
+        facingMode={facingMode}
+        onToggleCamera={toggleCamera}
+        onClose={() => {
+          stopCamera();
+          setTempSnapshot(null);
+        }}
+        onCapture={takeSnapshot}
+        onRetake={handleRetakeInCamera}
+        onUsePhoto={handleUsePhotoFromCamera}
+        zoomCapabilities={zoomCapabilities}
+        zoomLevel={zoomLevel}
+        onSetZoom={handleSetZoom}
+      />
 
-      {/* Viewfinder / Preview Frame */}
-      <div className="camera-viewfinder-box">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className={`camera-video ${facingMode === 'user' ? 'mirrored' : ''}`}
-          style={{
-            display: cameraActive ? 'block' : 'none'
-          }}
-        />
+      {/* Main Verification Page Card */}
+      <div className="emp-card">
+        <h2 className="emp-step-title">Capture Street Board Photo</h2>
+        <p className="emp-step-instruction">
+          Capture a clear photo of the street name board near the employee's residence.
+        </p>
 
-        {/* Compact Camera Status Pill (Top-left overlay) */}
-        {cameraActive && (
-          <button
-            type="button"
-            className="camera-status-pill"
-            onClick={toggleCamera}
-            title="Tap to switch camera"
-            aria-label="Switch Camera"
-          >
-            <span className="camera-status-dot" />
-            <SwitchCamera size={13} />
-            <span>{facingMode === 'user' ? 'Front Camera' : 'Back Camera'}</span>
-          </button>
-        )}
+        {/* TL Photo Guidance Box */}
+        <div style={{
+          backgroundColor: '#F8FAFC',
+          border: '1px solid #E2E8F0',
+          borderRadius: 'var(--radius-sm)',
+          padding: '10px 14px',
+          marginBottom: '14px',
+          fontSize: '0.82rem',
+          lineHeight: 1.5,
+          color: '#334155'
+        }}>
+          <div><strong>• What to photograph:</strong> Official municipal street name board, lane sign, or road signage near the employee's residence.</div>
+          <div><strong>• Where to stand:</strong> Stand directly facing the board at a readable distance with good lighting.</div>
+          <div><strong>• Requirement:</strong> Street name and locality markings must be clearly legible. Do not take a selfie or obstruct the sign text.</div>
+        </div>
 
-        {/* Live Camera Controls */}
-        {cameraActive && (
-          <div className="camera-controls-bar">
-            <button
-              id="btn-switch-camera-street"
-              type="button"
-              className="btn-camera-flip"
-              onClick={toggleCamera}
-              title={facingMode === 'user' ? 'Switch to Back Camera' : 'Switch to Front Camera'}
-              aria-label="Switch Camera"
-            >
-              <SwitchCamera size={20} />
-            </button>
-
-            <button
-              id="btn-snap-street"
-              type="button"
-              className="btn-snap"
-              onClick={takeSnapshot}
-              title="Capture Street Board Photo"
-              aria-label="Capture Photo"
-            >
-              <div className="btn-snap-inner" />
-            </button>
-
-            <button
-              type="button"
-              className="btn-camera-close"
-              onClick={stopCamera}
-              title="Close Camera"
-              aria-label="Close Camera"
-            >
-              <X size={20} />
-            </button>
-          </div>
-        )}
-
-        {/* Static Preview Mode if snapshot or upload taken */}
-        {!cameraActive && previewImg && (
-          <div className="camera-preview-img-wrapper">
-            <img
-              src={previewImg}
-              alt="Street Board Preview"
-            />
-            <div className="camera-captured-badge">
-              Street Board Captured
+        {/* Static Framed Preview or Empty State */}
+        <div className="camera-viewfinder-box" style={{ maxHeight: '360px' }}>
+          {previewImg ? (
+            <div className="camera-preview-img-wrapper">
+              <img
+                src={previewImg}
+                alt="Street Board Preview"
+              />
+              <div className="camera-captured-badge">
+                Street Board Captured
+              </div>
             </div>
-          </div>
-        )}
-
-        {/* Empty State */}
-        {!cameraActive && !previewImg && (
-          <div className="camera-empty-state">
-            <Signpost size={56} style={{ margin: '0 auto 12px auto', opacity: 0.85 }} />
-            <p style={{ fontSize: '0.92rem', color: '#CBD5E1' }}>Tap below to open camera & take street board photo</p>
-          </div>
-        )}
-      </div>
+          ) : (
+            <div className="camera-empty-state">
+              <Signpost size={56} style={{ margin: '0 auto 12px auto', opacity: 0.85 }} />
+              <p style={{ fontSize: '0.92rem', color: '#CBD5E1' }}>Tap below to open camera & capture street board photo</p>
+            </div>
+          )}
+        </div>
 
       {/* Real-Time Automated Quality & Content Validation Feedback */}
       <ImageValidationFeedback
@@ -416,7 +387,7 @@ export function StepStreetPhoto() {
             }}
           >
             <Camera size={20} />
-            <span>Open Camera & Take Street Photo</span>
+            <span>Open Camera & Capture Street Board Photo</span>
           </button>
         </div>
       )}
@@ -543,5 +514,6 @@ export function StepStreetPhoto() {
         </button>
       </div>
     </div>
-  );
+  </>
+);
 }

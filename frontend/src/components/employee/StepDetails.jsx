@@ -38,9 +38,9 @@ export function StepDetails() {
 
   return (
     <div className="emp-card">
-      <h2 className="emp-step-title">Confirm Your Details</h2>
+      <h2 className="emp-step-title">Confirm Employee Details</h2>
       <p className="emp-step-instruction">
-        Please review and verify that the information below matches your Collman Services records.
+        As authorized Team Leader, verify that the employee records below match the employee whose residence you are visiting.
       </p>
 
       <div style={{
@@ -126,7 +126,7 @@ export function StepDetails() {
       {!showCorrectionForm ? (
         <>
           <div style={{ textAlign: 'center', marginBottom: '16px', fontWeight: 700, color: '#1E1B4B', fontSize: '1rem' }}>
-            Are these your details?
+            Do these details match the employee you are verifying?
           </div>
 
           <div className="emp-actions-bottom">
@@ -161,10 +161,10 @@ export function StepDetails() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--warning)', fontWeight: 700, marginBottom: '8px' }}>
             <AlertTriangle size={20} />
-            <span>Employee Record Correction</span>
+            <span>Employee Record Discrepancy</span>
           </div>
           <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-            Please contact HR to officially correct your employee details. You can provide a remark below and continue with the address verification.
+            Note any discrepancies in the employee's records below. You can record a remark for HR/BGV review and proceed with the physical verification visit.
           </p>
 
           <div className="form-group">

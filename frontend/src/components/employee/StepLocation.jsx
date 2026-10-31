@@ -183,7 +183,7 @@ export function StepLocation() {
             );
           } else {
             setErrorMsg(
-              'Could not get an automatic GPS lock. You can search your address or click "Center on Registered Address" below.'
+              'Could not get an automatic GPS lock. You can search the address or click "Center on Registered Address" below.'
             );
             // Default to HR address coordinates if known, else default Chennai center
             if (!capturedData) {
@@ -211,7 +211,7 @@ export function StepLocation() {
       } else if (capturing) {
         setCapturing(false);
         setGpsStatusText('');
-        setErrorMsg('GPS request timed out. Please drag the pin on the map or search your address below.');
+        setErrorMsg('GPS request timed out. Please drag the pin on the map or search the employee residence address below.');
       }
     }, 14000);
 
@@ -294,7 +294,7 @@ export function StepLocation() {
         } else {
           // Multiple matches: show dropdown choices
           setSearchResults(res.results);
-          setSearchFeedback(`Found ${res.results.length} locations. Select yours below:`);
+          setSearchFeedback(`Found ${res.results.length} locations. Select matching location below:`);
         }
       } else {
         setSearchFeedback('No matching location found. Try searching by colony name, street, or area.');
@@ -319,7 +319,7 @@ export function StepLocation() {
   async function handleJumpToHrAddress() {
     if (employee?.hrLatitude && employee?.hrLongitude) {
       await handleMapLocationChange(employee.hrLatitude, employee.hrLongitude, 5);
-      setSearchFeedback('Map centered on your official registered HR address.');
+      setSearchFeedback("Map centered on employee's registered HR address.");
       setErrorMsg('');
     } else if (employee?.hrAddress) {
       // If coordinates not pre-saved, auto-search HR address
@@ -333,7 +333,7 @@ export function StepLocation() {
           await handleMapLocationChange(item.latitude, item.longitude, 5);
           setSearchFeedback(`Map centered on registered address: ${item.label}`);
         } else {
-          setSearchFeedback('Could not locate registered address automatically. Please search your area or drag the pin.');
+          setSearchFeedback('Could not locate registered address automatically. Please search the area or drag the pin.');
         }
       } catch (err) {
         setSearchFeedback('Could not locate registered address. Please drag the pin.');
@@ -364,9 +364,9 @@ export function StepLocation() {
 
   return (
     <div className="emp-card">
-      <h2 className="emp-step-title">Capture Your Exact House Location</h2>
+      <h2 className="emp-step-title">Capture Employee Residential Location</h2>
       <p className="emp-step-instruction">
-        Confirm the exact GPS coordinates of your residence. You can auto-detect via GPS, search your locality, or tap/drag the green pin directly onto your house entrance.
+        As Team Leader, capture the live GPS coordinates while present at the employee's residence. You can auto-detect via device GPS, search the locality, or fine-tune the pin directly onto the employee's residential entrance.
       </p>
 
       {/* Top Action Buttons */}
@@ -387,7 +387,7 @@ export function StepLocation() {
           ) : (
             <>
               <Crosshair size={20} />
-              <span>{capturedData ? 'Re-detect Live GPS' : 'Detect My Location (GPS)'}</span>
+              <span>{capturedData ? 'Re-detect Live GPS' : 'Detect Live Location (GPS)'}</span>
             </>
           )}
         </button>
@@ -398,11 +398,11 @@ export function StepLocation() {
             type="button"
             className="btn btn-secondary"
             onClick={handleJumpToHrAddress}
-            title="Center map directly on your registered HR address"
+            title="Center map directly on employee's registered HR address"
             style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
           >
             <Building size={18} color="var(--primary)" />
-            <span>My Registered Address</span>
+            <span>Employee Registered Address</span>
           </button>
         )}
 
@@ -583,7 +583,7 @@ export function StepLocation() {
               </button>
             )}
             <span style={{ fontSize: '0.8rem', color: '#78350f', alignSelf: 'center' }}>
-              Or drag the green pin on the map to your exact house.
+              Or drag the green pin on the map directly onto the employee's residential entrance.
             </span>
           </div>
         </div>

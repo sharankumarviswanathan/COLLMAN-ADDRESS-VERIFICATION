@@ -95,6 +95,52 @@ export function EmployeeWizard() {
           </div>
         )}
 
+        {/* Verifying Employee Badge Banner for Team Leader */}
+        {step >= 2 && step <= 13 && employee && (
+          <div
+            style={{
+              backgroundColor: '#F8FAFC',
+              border: '1.5px solid #CBD5E1',
+              borderRadius: 'var(--radius-md)',
+              padding: '10px 14px',
+              marginBottom: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '8px',
+              boxShadow: '0 2px 6px rgba(0,0,0,0.03)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+              <span
+                style={{
+                  fontSize: '0.68rem',
+                  fontWeight: 800,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                  backgroundColor: '#DCFCE7',
+                  color: '#15803D',
+                  padding: '3px 8px',
+                  borderRadius: '4px',
+                  border: '1px solid #86EFAC'
+                }}
+              >
+                VERIFYING EMPLOYEE
+              </span>
+              <span style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.96rem' }}>
+                {employee.employeeName || employee.name || employee.full_name}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.84rem' }}>
+              <span style={{ color: '#64748B', fontWeight: 600 }}>EMP ID:</span>
+              <span style={{ fontWeight: 800, color: 'var(--emp-subtitle-color)', fontFamily: 'monospace' }}>
+                {employee.employeeId || employee.id}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Step Router */}
         {step === 0 && <StepWelcome />}
         {step === 1 && <StepEmpId />}

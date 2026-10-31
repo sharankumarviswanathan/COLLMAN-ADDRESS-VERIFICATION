@@ -58,7 +58,7 @@ export function StepResidence() {
     <div className="emp-card">
       <h2 className="emp-step-title">Residence Details</h2>
       <p className="emp-step-instruction">
-        Please specify your accommodation type and how long you have been residing here.
+        Specify the employee's accommodation type and how long the employee has been residing at this address.
       </p>
 
       <div className="form-group" style={{ marginBottom: '20px' }}>

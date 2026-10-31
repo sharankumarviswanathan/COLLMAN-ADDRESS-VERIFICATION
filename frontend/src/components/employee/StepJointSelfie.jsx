@@ -3,9 +3,10 @@ import { useVerification } from '../../context/VerificationContext';
 import { api } from '../../api/client';
 import { capturePhotoLocation } from '../../lib/photoLocation';
 import { validatePhotoWithAi } from '../../lib/imageValidator';
-import { getCameraStream, stopMediaStream } from '../../lib/cameraHelper';
+import { getCameraStream, stopMediaStream, getCameraZoomCapabilities, applyCameraZoom } from '../../lib/cameraHelper';
 import { normalizeCapturedImage, computeImageSignature } from '../../lib/imageNormalizer';
 import { ImageValidationFeedback } from './ImageValidationFeedback';
+import FullscreenCameraModal from './FullscreenCameraModal';
 import {
   Camera,
   CheckCircle2,
@@ -26,6 +27,7 @@ export function StepJointSelfie() {
   const { employee, progress, updateProgress, nextStep, prevStep } = useVerification();
   const [cameraActive, setCameraActive] = useState(false);
   const [facingMode, setFacingMode] = useState('user'); // front camera default for selfie
+  const [tempSnapshot, setTempSnapshot] = useState(null);
   const [previewImg, setPreviewImg] = useState(progress.jointSelfieUrl || null);
   const [photoCoords, setPhotoCoords] = useState(
     progress.jointSelfieCoords || (progress.jointSelfieLatitude ? {
@@ -52,6 +54,15 @@ export function StepJointSelfie() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [streamReady, setStreamReady] = useState(false);
+  const [zoomCapabilities, setZoomCapabilities] = useState(null);
+  const [zoomLevel, setZoomLevel] = useState(1.0);
+
+  async function handleSetZoom(level) {
+    setZoomLevel(level);
+    if (streamRef.current) {
+      await applyCameraZoom(streamRef.current, level);
+    }
+  }
 
   // Validation state: always starts as null to force validation from scratch
   const [validating, setValidating] = useState(false);
@@ -141,24 +152,29 @@ export function StepJointSelfie() {
     return () => { isMounted = false; };
   }, [previewImg, cameraActive]);
 
-  // When cameraActive changes, attach video stream
+  // When cameraActive changes or tempSnapshot changes, attach video stream
   useEffect(() => {
-    if (cameraActive && streamRef.current && videoRef.current) {
+    if (cameraActive && !tempSnapshot && streamRef.current && videoRef.current) {
       videoRef.current.srcObject = streamRef.current;
       videoRef.current.play().catch((err) => {
         console.warn('Video autoplay failed, user gesture needed:', err);
       });
     }
-  }, [cameraActive, streamReady]);
+  }, [cameraActive, streamReady, tempSnapshot]);
 
   async function startCamera(mode = facingMode) {
     stopCamera();
     setErrorMsg('');
     setStreamReady(false);
+    setTempSnapshot(null);
 
     try {
       const stream = await getCameraStream(mode);
       streamRef.current = stream;
+
+      const caps = getCameraZoomCapabilities(stream);
+      setZoomCapabilities(caps);
+      setZoomLevel(caps?.supported ? caps.min : 1.0);
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -175,7 +191,7 @@ export function StepJointSelfie() {
       console.warn('Camera stream failed:', err);
       setCameraActive(false);
       setErrorMsg(
-        'Unable to access live camera. Please allow camera permissions in your browser to take the joint selfie.'
+        'Unable to access live camera. Please allow camera permissions in your browser to capture the joint selfie.'
       );
     }
   }
@@ -201,8 +217,6 @@ export function StepJointSelfie() {
     const video = videoRef.current;
 
     isCapturingRef.current = true;
-    setValidating(true);
-    setValidationResult(null);
     setErrorMsg('');
 
     try {
@@ -218,46 +232,30 @@ export function StepJointSelfie() {
         quality: 0.90
       });
 
-      stopCamera();
-      setPreviewImg(normalized.dataUrl);
-
-      // 3. Perform automated quality & content validation on the exact normalized image
-      const val = await validatePhotoWithAi(normalized.dataUrl, 'joint_selfie');
-      const safeVal = val && typeof val === 'object' ? val : {
-        valid: false,
-        error: 'Unable to analyze photo. Please retake the photo.',
-        checks: {
-          clarity: { passed: false, message: 'Check failed' },
-          lighting: { passed: false, message: 'Check failed' },
-          visibility: { passed: false, message: 'Check failed' },
-          content: { passed: false, message: 'Check failed' }
-        }
-      };
-
-      // Lock validation result specifically to this normalized image signature
-      safeVal.imageSignature = normalized.imageSignature;
-      setValidationResult(safeVal);
-      if (!safeVal.valid) {
-        setErrorMsg(safeVal.error || 'TL & Employee Joint Selfie validation failed. Both faces must be clearly visible.');
-      }
+      // Keep full-screen camera open in review mode with Retake and Use Photo buttons
+      setTempSnapshot(normalized);
     } catch (vErr) {
-      console.warn('Snapshot normalization or validation error:', vErr);
-      const failVal = {
-        valid: false,
-        error: 'Unable to analyze photo. Please retake the photo.',
-        checks: {
-          clarity: { passed: false, message: 'Check failed' },
-          lighting: { passed: false, message: 'Check failed' },
-          visibility: { passed: false, message: 'Check failed' },
-          content: { passed: false, message: 'Check failed' }
-        }
-      };
-      setValidationResult(failVal);
-      setErrorMsg('Unable to analyze photo. Please retake the photo.');
+      console.warn('Snapshot normalization or capture error:', vErr);
+      setErrorMsg('Unable to capture photo. Please try again.');
     } finally {
-      setValidating(false);
       isCapturingRef.current = false;
     }
+  }
+
+  function handleRetakeInCamera() {
+    setTempSnapshot(null);
+    startCamera(facingMode);
+  }
+
+  function handleUsePhotoFromCamera() {
+    if (!tempSnapshot) return;
+    const captured = tempSnapshot;
+    stopCamera();
+    setCameraActive(false);
+    setTempSnapshot(null);
+    setValidationResult(null);
+    setErrorMsg('');
+    setPreviewImg(captured.dataUrl);
   }
 
   function handleSelectTl(e) {
@@ -351,264 +349,253 @@ export function StepJointSelfie() {
   const verificationRef = progress?.caseReference || employee?.caseReference || `AV-${employee?.employeeId || 'COL'}`;
 
   return (
-    <div className="emp-card">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-        <h2 className="emp-step-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Users size={24} color="var(--primary)" />
-          <span>TL &amp; Employee Joint Selfie</span>
-        </h2>
-        <span className="badge badge-primary" style={{ fontSize: '0.75rem', fontWeight: 700 }}>
-          Mandatory Step
-        </span>
-      </div>
-
-      <p className="emp-step-instruction">
-        The Team Leader and Employee must appear together in the same live photo with <strong>both faces clearly visible</strong> and looking directly at the camera. Live camera capture only.
-      </p>
-
-      {/* Verification & Identity Context Banner */}
-      <div style={{
-        backgroundColor: '#F8FAFC',
-        border: '1.5px solid #E2E8F0',
-        borderRadius: 'var(--radius-md)',
-        padding: '12px 14px',
-        marginBottom: '16px',
-        fontSize: '0.84rem'
-      }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
-          <div>
-            <div style={{ fontSize: '0.72rem', color: '#64748B', fontWeight: 600 }}>VERIFICATION REFERENCE</div>
-            <div style={{ fontWeight: 700, color: 'var(--primary)', fontFamily: 'monospace' }}>
-              {verificationRef}
-            </div>
+    <>
+      {/* Full-Screen Camera Overlay (Mobile & Desktop) */}
+      <FullscreenCameraModal
+        isOpen={cameraActive}
+        title="Capture Joint Selfie"
+        icon={Users}
+        guidanceText="Both TL & Employee must be in frame"
+        videoRef={videoRef}
+        tempSnapshot={tempSnapshot}
+        facingMode={facingMode}
+        onToggleCamera={toggleCamera}
+        onClose={() => {
+          stopCamera();
+          setTempSnapshot(null);
+        }}
+        onCapture={takeSnapshot}
+        onRetake={handleRetakeInCamera}
+        onUsePhoto={handleUsePhotoFromCamera}
+        zoomCapabilities={zoomCapabilities}
+        zoomLevel={zoomLevel}
+        onSetZoom={handleSetZoom}
+      >
+        {/* Dual-Person Framing Guide Overlay (When Camera is Live) */}
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          pointerEvents: 'none',
+          display: 'flex',
+          justifyContent: 'space-around',
+          alignItems: 'center',
+          padding: '70px 10px 90px 10px'
+        }}>
+          {/* Left Silhouette: Team Leader */}
+          <div style={{
+            width: '42%',
+            height: '75%',
+            border: '2px dashed rgba(56, 189, 248, 0.85)',
+            borderRadius: '50% 50% 45% 45%',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'flex-start',
+            paddingTop: '16px',
+            backgroundColor: 'rgba(56, 189, 248, 0.10)'
+          }}>
+            <span style={{
+              backgroundColor: 'rgba(14, 116, 144, 0.90)',
+              color: '#FFFFFF',
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              padding: '3px 8px',
+              borderRadius: '10px',
+              letterSpacing: '0.5px'
+            }}>
+              TEAM LEADER
+            </span>
           </div>
-          <div>
-            <div style={{ fontSize: '0.72rem', color: '#64748B', fontWeight: 600 }}>EMPLOYEE DETAILS</div>
-            <div style={{ fontWeight: 700, color: '#0F172A' }}>
-              {employee?.employeeName} ({employee?.employeeId})
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: '0.72rem', color: '#64748B', fontWeight: 600 }}>AUTHENTICATED TEAM LEADER</div>
-            <div style={{ fontWeight: 700, color: '#2563EB', display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <UserCheck size={14} />
-              <span>{selectedTlName || employee?.teamLeader || 'Select Team Leader'}</span>
-            </div>
+
+          {/* Right Silhouette: Employee */}
+          <div style={{
+            width: '42%',
+            height: '75%',
+            border: '2px dashed rgba(16, 185, 129, 0.85)',
+            borderRadius: '50% 50% 45% 45%',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'flex-start',
+            paddingTop: '16px',
+            backgroundColor: 'rgba(16, 185, 129, 0.10)'
+          }}>
+            <span style={{
+              backgroundColor: 'rgba(6, 78, 59, 0.90)',
+              color: '#FFFFFF',
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              padding: '3px 8px',
+              borderRadius: '10px',
+              letterSpacing: '0.5px'
+            }}>
+              EMPLOYEE
+            </span>
           </div>
         </div>
 
-        {/* TL Selection / Switcher if needed */}
-        {!cameraActive && !previewImg && (
-          <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px dashed #CBD5E1' }}>
-            <label style={{ fontSize: '0.76rem', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '4px' }}>
-              Confirm Visiting Team Leader:
-            </label>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <select
-                id="select-team-leader"
-                value={useCustomTl ? 'CUSTOM' : selectedTlId}
-                onChange={handleSelectTl}
-                style={{
-                  flex: 1,
-                  minWidth: '220px',
-                  padding: '6px 10px',
-                  borderRadius: 'var(--radius-sm)',
-                  border: '1px solid #CBD5E1',
-                  fontSize: '0.82rem',
-                  backgroundColor: '#FFFFFF'
-                }}
-              >
-                {employee?.teamLeader && (
-                  <option value={employee.teamLeader}>
-                    Assigned TL: {employee.teamLeader}
-                  </option>
-                )}
-                {tlList.map((tl) => (
-                  <option key={tl.id} value={tl.username || String(tl.id)}>
-                    {tl.full_name} ({tl.username || 'ID: ' + tl.id}) {tl.branch ? `- ${tl.branch}` : ''}
-                  </option>
-                ))}
-                <option value="CUSTOM">+ Enter Other TL ID / Name</option>
-              </select>
+        <div style={{
+          position: 'absolute',
+          top: '72px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          backgroundColor: 'rgba(0,0,0,0.65)',
+          color: '#FFFFFF',
+          padding: '6px 14px',
+          borderRadius: '20px',
+          fontSize: '0.8rem',
+          fontWeight: 600,
+          pointerEvents: 'none',
+          whiteSpace: 'nowrap',
+          zIndex: 5
+        }}>
+          Both TL & Employee must be in frame
+        </div>
+      </FullscreenCameraModal>
 
-              {useCustomTl && (
-                <input
-                  id="input-custom-tl"
-                  type="text"
-                  placeholder="Enter TL Employee ID / Full Name"
-                  value={customTlInput}
-                  onChange={(e) => setCustomTlInput(e.target.value)}
+      {/* Main Verification Page Card */}
+      <div className="emp-card">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+          <h2 className="emp-step-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Users size={24} color="var(--primary)" />
+            <span>TL &amp; Employee Joint Selfie</span>
+          </h2>
+          <span className="badge badge-primary" style={{ fontSize: '0.75rem', fontWeight: 700 }}>
+            Mandatory Step
+          </span>
+        </div>
+
+        <p className="emp-step-instruction">
+          Capture a live selfie showing both the Team Leader and employee together at the employee's residence.
+        </p>
+
+        {/* TL Photo Guidance Box */}
+        <div style={{
+          backgroundColor: '#F8FAFC',
+          border: '1px solid #E2E8F0',
+          borderRadius: 'var(--radius-sm)',
+          padding: '10px 14px',
+          marginBottom: '14px',
+          fontSize: '0.82rem',
+          lineHeight: 1.5,
+          color: '#334155'
+        }}>
+          <div><strong>• What to photograph:</strong> Joint live selfie of the authorized Team Leader and the employee being verified.</div>
+          <div><strong>• Where to stand:</strong> Stand together side-by-side at the employee's residential entrance.</div>
+          <div><strong>• Requirement:</strong> Both faces must be clearly visible, unobstructed, and looking at the camera. Live camera capture only.</div>
+        </div>
+
+        {/* Verification & Identity Context Banner */}
+        <div style={{
+          backgroundColor: '#F8FAFC',
+          border: '1.5px solid #E2E8F0',
+          borderRadius: 'var(--radius-md)',
+          padding: '12px 14px',
+          marginBottom: '16px',
+          fontSize: '0.84rem'
+        }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+            <div>
+              <div style={{ fontSize: '0.72rem', color: '#64748B', fontWeight: 600 }}>VERIFICATION REFERENCE</div>
+              <div style={{ fontWeight: 700, color: 'var(--primary)', fontFamily: 'monospace' }}>
+                {verificationRef}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.72rem', color: '#64748B', fontWeight: 600 }}>EMPLOYEE DETAILS</div>
+              <div style={{ fontWeight: 700, color: '#0F172A' }}>
+                {employee?.employeeName} ({employee?.employeeId})
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.72rem', color: '#64748B', fontWeight: 600 }}>AUTHENTICATED TEAM LEADER</div>
+              <div style={{ fontWeight: 700, color: '#2563EB', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <UserCheck size={14} />
+                <span>{selectedTlName || employee?.teamLeader || 'Select Team Leader'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* TL Selection / Switcher if needed */}
+          {!cameraActive && !previewImg && (
+            <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px dashed #CBD5E1' }}>
+              <label style={{ fontSize: '0.76rem', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '4px' }}>
+                Confirm Visiting Team Leader:
+              </label>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <select
+                  id="select-team-leader"
+                  value={useCustomTl ? 'CUSTOM' : selectedTlId}
+                  onChange={handleSelectTl}
                   style={{
                     flex: 1,
-                    minWidth: '200px',
+                    minWidth: '220px',
                     padding: '6px 10px',
                     borderRadius: 'var(--radius-sm)',
                     border: '1px solid #CBD5E1',
-                    fontSize: '0.82rem'
+                    fontSize: '0.82rem',
+                    backgroundColor: '#FFFFFF'
                   }}
-                />
-              )}
+                >
+                  {employee?.teamLeader && (
+                    <option value={employee.teamLeader}>
+                      Assigned TL: {employee.teamLeader}
+                    </option>
+                  )}
+                  {tlList.map((tl) => (
+                    <option key={tl.id} value={tl.username || String(tl.id)}>
+                      {tl.full_name} ({tl.username || 'ID: ' + tl.id}) {tl.branch ? `- ${tl.branch}` : ''}
+                    </option>
+                  ))}
+                  <option value="CUSTOM">+ Enter Other TL ID / Name</option>
+                </select>
+
+                {useCustomTl && (
+                  <input
+                    id="input-custom-tl"
+                    type="text"
+                    placeholder="Enter TL Employee ID / Full Name"
+                    value={customTlInput}
+                    onChange={(e) => setCustomTlInput(e.target.value)}
+                    style={{
+                      flex: 1,
+                      minWidth: '200px',
+                      padding: '6px 10px',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid #CBD5E1',
+                      fontSize: '0.82rem'
+                    }}
+                  />
+                )}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
-      {/* Viewfinder / Live Camera Frame (Strictly Live Camera Only - No Gallery Upload) */}
-      <div className="camera-viewfinder-box" style={{ minHeight: '340px' }}>
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className={`camera-video ${facingMode === 'user' ? 'mirrored' : ''}`}
-          style={{
-            display: cameraActive ? 'block' : 'none'
-          }}
-        />
-
-        {/* Dual-Person Framing Guide Overlay (When Camera is Active) */}
-        {cameraActive && (
-          <div style={{
-            position: 'absolute',
-            inset: 0,
-            pointerEvents: 'none',
-            display: 'flex',
-            justifyContent: 'space-around',
-            alignItems: 'center',
-            padding: '20px 10px 70px 10px'
-          }}>
-            {/* Left Silhouette: Team Leader */}
-            <div style={{
-              width: '42%',
-              height: '75%',
-              border: '2px dashed rgba(59, 130, 246, 0.75)',
-              borderRadius: '50% 50% 45% 45%',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'flex-start',
-              paddingTop: '16px',
-              backgroundColor: 'rgba(59, 130, 246, 0.08)'
-            }}>
-              <span style={{
-                backgroundColor: 'rgba(30, 58, 138, 0.85)',
-                color: '#FFFFFF',
-                fontSize: '0.72rem',
-                fontWeight: 700,
-                padding: '3px 8px',
-                borderRadius: '10px',
-                letterSpacing: '0.5px'
-              }}>
-                TEAM LEADER
-              </span>
+        {/* Static Viewfinder / Preview Frame */}
+        <div className="camera-viewfinder-box" style={{ minHeight: '340px' }}>
+          {previewImg ? (
+            <div className="camera-preview-img-wrapper">
+              <img
+                src={previewImg}
+                alt="TL & Employee Joint Selfie Preview"
+              />
+              <div className="camera-captured-badge" style={{ backgroundColor: 'rgba(15, 23, 42, 0.85)' }}>
+                Captured Joint Selfie
+              </div>
             </div>
-
-            {/* Right Silhouette: Employee */}
-            <div style={{
-              width: '42%',
-              height: '75%',
-              border: '2px dashed rgba(16, 185, 129, 0.75)',
-              borderRadius: '50% 50% 45% 45%',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'flex-start',
-              paddingTop: '16px',
-              backgroundColor: 'rgba(16, 185, 129, 0.08)'
-            }}>
-              <span style={{
-                backgroundColor: 'rgba(6, 78, 59, 0.85)',
-                color: '#FFFFFF',
-                fontSize: '0.72rem',
-                fontWeight: 700,
-                padding: '3px 8px',
-                borderRadius: '10px',
-                letterSpacing: '0.5px'
-              }}>
-                EMPLOYEE
-              </span>
+          ) : (
+            <div className="camera-empty-state">
+              <Users size={56} style={{ margin: '0 auto 12px auto', opacity: 0.85, color: '#38BDF8' }} />
+              <p style={{ fontSize: '0.94rem', color: '#F1F5F9', fontWeight: 600 }}>
+                Live Camera Capture Only
+              </p>
+              <p style={{ fontSize: '0.82rem', color: '#94A3B8', maxWidth: '320px', margin: '4px auto 0 auto' }}>
+                Both Team Leader and Employee must stand together within the camera frame with both faces clearly visible.
+              </p>
             </div>
-          </div>
-        )}
-
-        {/* Compact Camera Status Pill (Top-left overlay) */}
-        {cameraActive && (
-          <button
-            type="button"
-            className="camera-status-pill"
-            onClick={toggleCamera}
-            title="Tap to switch camera"
-            aria-label="Switch Camera"
-          >
-            <span className="camera-status-dot" />
-            <SwitchCamera size={13} />
-            <span>{facingMode === 'user' ? 'Front Camera' : 'Back Camera'}</span>
-          </button>
-        )}
-
-        {/* Live Camera Controls Overlay */}
-        {cameraActive && (
-          <div className="camera-controls-bar">
-            <button
-              id="btn-switch-camera-joint"
-              type="button"
-              className="btn-camera-flip"
-              onClick={toggleCamera}
-              title={facingMode === 'user' ? 'Switch to Back Camera' : 'Switch to Front Camera'}
-              aria-label="Switch Camera"
-            >
-              <SwitchCamera size={20} />
-            </button>
-
-            <button
-              id="btn-snap-joint-selfie"
-              type="button"
-              className="btn-snap"
-              onClick={takeSnapshot}
-              title="Capture Joint Photo"
-              aria-label="Capture Joint Photo"
-            >
-              <div className="btn-snap-inner" />
-            </button>
-
-            <button
-              type="button"
-              className="btn-camera-close"
-              onClick={stopCamera}
-              title="Close Camera"
-              aria-label="Close Camera"
-            >
-              <X size={20} />
-            </button>
-          </div>
-        )}
-
-        {/* Static Preview Mode if snapshot taken */}
-        {!cameraActive && previewImg && (
-          <div className="camera-preview-img-wrapper">
-            <img
-              src={previewImg}
-              alt="TL & Employee Joint Selfie Preview"
-            />
-            <div className="camera-captured-badge" style={{ backgroundColor: 'rgba(15, 23, 42, 0.85)' }}>
-              Captured Joint Selfie
-            </div>
-          </div>
-        )}
-
-        {/* Default Empty State */}
-        {!cameraActive && !previewImg && (
-          <div className="camera-empty-state">
-            <Users size={56} style={{ margin: '0 auto 12px auto', opacity: 0.85, color: '#38BDF8' }} />
-            <p style={{ fontSize: '0.94rem', color: '#F1F5F9', fontWeight: 600 }}>
-              Live Camera Capture Only
-            </p>
-            <p style={{ fontSize: '0.82rem', color: '#94A3B8', maxWidth: '320px', margin: '4px auto 0 auto' }}>
-              Both Team Leader and Employee must stand together within the camera frame with both faces clearly visible.
-            </p>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
       {/* Real-Time Automated Quality & Content Validation Feedback */}
       <ImageValidationFeedback
@@ -669,7 +656,7 @@ export function StepJointSelfie() {
             onClick={() => startCamera('user')}
           >
             <Camera size={20} />
-            <span>Open Live Camera &amp; Take Joint Selfie</span>
+            <span>Open Camera &amp; Capture Joint Selfie</span>
           </button>
         </div>
       )}
@@ -817,5 +804,6 @@ export function StepJointSelfie() {
         <strong>Compliance Notice:</strong> This joint selfie records mutual in-person presence of the Team Leader and the employee at the verified physical address. Complete GPS accuracy, timestamp, and all other physical evidence remain available for HR and BGV audit.
       </div>
     </div>
-  );
+  </>
+);
 }

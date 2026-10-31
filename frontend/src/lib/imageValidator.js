@@ -538,8 +538,8 @@ export async function validatePhotoInBrowser(dataUrl, photoType, hrAddress = '')
 
           if (!facePassed && !textPassed) {
             report.valid = false;
-            report.checks.content = { passed: false, message: 'Both face and door number missing' };
-            report.error = 'Door Number Selfie must clearly show BOTH your face and readable door/house number. Partial face, hair-only, or missing number is not accepted.';
+            report.checks.content = { passed: false, message: 'Both employee face and door number missing' };
+            report.error = "The employee's face is not clearly visible. Please position yourself and the employee correctly and retake the selfie with the door number visible.";
             return resolve(report);
           }
 
@@ -551,14 +551,14 @@ export async function validatePhotoInBrowser(dataUrl, photoType, hrAddress = '')
               ? 'Partial face captured. Full face required'
               : 'Employee face not detected';
             report.checks.content = { passed: false, message: faceMsg };
-            report.error = 'Employee face is not clearly visible in the door selfie. Partial face or hair-only is not accepted. Please position your full face and door number in the camera frame.';
+            report.error = "The employee's face is not clearly visible. Please position yourself and the employee correctly and retake the selfie with the door number visible.";
             return resolve(report);
           }
 
           if (!textPassed) {
             report.valid = false;
             report.checks.content = { passed: false, message: 'Door/house number could not be read' };
-            report.error = 'Door/house number could not be read. Please retake ensuring the door number is clearly visible beside your face.';
+            report.error = "Door/house number could not be read. Please position yourself and the employee so that the employee's face and the door number are both clearly visible.";
             return resolve(report);
           }
 
@@ -573,7 +573,7 @@ export async function validatePhotoInBrowser(dataUrl, photoType, hrAddress = '')
               ? 'Partial face captured. Full face required'
               : 'Employee face not detected';
             report.checks.content = { passed: false, message: faceMsg };
-            report.error = 'Employee face is not clearly visible. Full employee face must be clearly visible looking directly at the camera. Partial face or hair-only is not accepted.';
+            report.error = "The employee's face is not clearly visible. As Team Leader, please position the camera so the employee's full face is in clear focus and retake the photo.";
             return resolve(report);
           }
           report.checks.content = { passed: true, message: 'Employee face clearly verified' };
