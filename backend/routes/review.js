@@ -122,10 +122,24 @@ router.get('/:caseRefOrEmpId', authenticateAdmin, requirePermission('review_case
       [empId]
     );
 
-    const evidence = rawEvidence.map((ev) => ({
-      ...ev,
-      fileUrl: formatFileUrl(ev.file_path)
-    }));
+    const evidence = rawEvidence.map((ev) => {
+      let valReport = ev.validation_report;
+      if (valReport && typeof valReport === 'string' && valReport.includes('Buffer')) {
+        try {
+          const parsed = JSON.parse(valReport);
+          delete parsed.frontOriginalBuffer;
+          delete parsed.frontEnhancedBuffer;
+          delete parsed.backOriginalBuffer;
+          delete parsed.backEnhancedBuffer;
+          valReport = JSON.stringify(parsed);
+        } catch (_) {}
+      }
+      return {
+        ...ev,
+        validation_report: valReport,
+        fileUrl: formatFileUrl(ev.file_path)
+      };
+    });
 
     // Perform Reverse-Geocoding on Employee Live Captured Coordinates
     let revGeo = null;
@@ -137,6 +151,23 @@ router.get('/:caseRefOrEmpId', authenticateAdmin, requirePermission('review_case
         revGeo = await reverseGeocodeCoordinates(progress.latitude, progress.longitude, { googleApiKey });
       } catch (revErr) {
         console.warn('[REVERSE GEOCODE] Reverse geocode error in review endpoint:', revErr.message);
+      }
+    }
+
+    // Sanitize OCR result to strip any legacy large buffer arrays
+    let addressProofOcrResult = null;
+    if (progress?.address_proof_ocr_result) {
+      try {
+        const parsed = typeof progress.address_proof_ocr_result === 'string'
+          ? JSON.parse(progress.address_proof_ocr_result)
+          : { ...progress.address_proof_ocr_result };
+        delete parsed.frontOriginalBuffer;
+        delete parsed.frontEnhancedBuffer;
+        delete parsed.backOriginalBuffer;
+        delete parsed.backEnhancedBuffer;
+        addressProofOcrResult = parsed;
+      } catch (_) {
+        addressProofOcrResult = null;
       }
     }
 
@@ -172,15 +203,26 @@ router.get('/:caseRefOrEmpId', authenticateAdmin, requirePermission('review_case
           documentEnhancedMeta: getDocMeta(progress.document_enhanced_path),
           documentBackEnhancedMeta: getDocMeta(progress.document_back_enhanced_path),
           addressProofDecision: progress.address_proof_decision || null,
-          addressProofOcrResult: progress.address_proof_ocr_result ? (typeof progress.address_proof_ocr_result === 'string' ? JSON.parse(progress.address_proof_ocr_result) : progress.address_proof_ocr_result) : null
+          addressProofOcrResult
         }
       : null;
 
-    // Automatic Address Proof Document Address Matching
+    // Automatic Address Proof Document Address Matching (cached or fastOnly)
     let documentAddressMatch = null;
-    if (progress && progress.document_path) {
+    if (progress?.document_address_match) {
       try {
-        documentAddressMatch = await performDocumentAddressMatch(employee, progress);
+        documentAddressMatch = typeof progress.document_address_match === 'string'
+          ? JSON.parse(progress.document_address_match)
+          : progress.document_address_match;
+      } catch (_) {
+        documentAddressMatch = null;
+      }
+    }
+
+    if (!documentAddressMatch && progress && progress.document_path) {
+      try {
+        // fastOnly: true returns immediately if not already cached/precalculated
+        documentAddressMatch = await performDocumentAddressMatch(employee, progress, { fastOnly: true });
       } catch (docErr) {
         console.warn('Document address match error in review endpoint:', docErr.message);
       }

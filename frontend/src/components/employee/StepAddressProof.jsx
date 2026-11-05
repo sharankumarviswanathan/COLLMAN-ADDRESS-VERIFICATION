@@ -363,9 +363,13 @@ export function StepAddressProof() {
     stopCamera();
 
     let enhancedDataUrl = null;
+    let detectionWarning = null;
     try {
       const prep = await preprocessDocumentClientSide(dataUrl);
       enhancedDataUrl = prep?.enhancedUrl || null;
+      if (!prep?.detectionSuccess && prep?.detectionWarning) {
+        detectionWarning = prep.detectionWarning;
+      }
     } catch (pErr) {
       console.warn('Intelligent preprocessing error on capture:', pErr);
     }
@@ -375,6 +379,7 @@ export function StepAddressProof() {
       dataUrl: dataUrl,
       previewUrl: dataUrl,
       enhancedDataUrl: enhancedDataUrl,
+      detectionWarning,
       name: `${docType.replace(/\s+/g, '_')}_${side.toUpperCase()}_Photo.jpg`,
       size: Math.round((dataUrl.length * 3) / 4),
       type: 'image',
@@ -403,12 +408,16 @@ export function StepAddressProof() {
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
     let previewUrl = null;
     let enhancedDataUrl = null;
+    let detectionWarning = null;
 
     if (!isPdf) {
       previewUrl = URL.createObjectURL(file);
       try {
         const prep = await preprocessDocumentClientSide(previewUrl);
         enhancedDataUrl = prep?.enhancedUrl || null;
+        if (!prep?.detectionSuccess && prep?.detectionWarning) {
+          detectionWarning = prep.detectionWarning;
+        }
       } catch (pErr) {
         console.warn('Client-side preprocessing error on file upload:', pErr);
       }
@@ -419,6 +428,7 @@ export function StepAddressProof() {
       dataUrl: null,
       previewUrl: previewUrl,
       enhancedDataUrl: enhancedDataUrl,
+      detectionWarning,
       name: file.name,
       size: file.size,
       type: isPdf ? 'pdf' : 'image',
@@ -880,9 +890,9 @@ export function StepAddressProof() {
               <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
                 {frontDoc.type === 'image' && (frontDoc.previewUrl || frontDoc.dataUrl) ? (
                   <div style={{
-                    width: '94px',
-                    height: '72px',
-                    borderRadius: '4px',
+                    width: '124px',
+                    height: '78px',
+                    borderRadius: '6px',
                     overflow: 'hidden',
                     border: '1px solid #CBD5E1',
                     flexShrink: 0,
@@ -899,9 +909,9 @@ export function StepAddressProof() {
                   </div>
                 ) : (
                   <div style={{
-                    width: '94px',
-                    height: '72px',
-                    borderRadius: '4px',
+                    width: '124px',
+                    height: '78px',
+                    borderRadius: '6px',
                     border: '1px solid #CBD5E1',
                     backgroundColor: '#FEE2E2',
                     display: 'flex',
@@ -1136,9 +1146,9 @@ export function StepAddressProof() {
               <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
                 {backDoc.type === 'image' && (backDoc.previewUrl || backDoc.dataUrl) ? (
                   <div style={{
-                    width: '94px',
-                    height: '72px',
-                    borderRadius: '4px',
+                    width: '124px',
+                    height: '78px',
+                    borderRadius: '6px',
                     overflow: 'hidden',
                     border: '1px solid #CBD5E1',
                     flexShrink: 0,
@@ -1155,9 +1165,9 @@ export function StepAddressProof() {
                   </div>
                 ) : (
                   <div style={{
-                    width: '94px',
-                    height: '72px',
-                    borderRadius: '4px',
+                    width: '124px',
+                    height: '78px',
+                    borderRadius: '6px',
                     border: '1px solid #CBD5E1',
                     backgroundColor: '#FEE2E2',
                     display: 'flex',

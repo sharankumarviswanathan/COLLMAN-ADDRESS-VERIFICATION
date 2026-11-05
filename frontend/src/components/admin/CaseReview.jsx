@@ -263,8 +263,9 @@ export function CaseReview() {
 
   if (loading) {
     return (
-      <div className="admin-content" style={{ textAlign: 'center', padding: '60px' }}>
-        <p style={{ color: 'var(--text-muted)' }}>Loading Case Review Workspace...</p>
+      <div className="admin-content" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '55vh', gap: '14px' }}>
+        <div style={{ width: 36, height: 36, border: '3px solid #E2E8F0', borderTopColor: '#0284C7', borderRadius: '50%', animation: 'spin 0.75s linear infinite' }} />
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.92rem', fontWeight: 500 }}>Loading Case Review Workspace...</p>
       </div>
     );
   }
@@ -854,15 +855,24 @@ export function CaseReview() {
     };
   }
 
+  const extractRoadFromAddress = (addr) => {
+    if (!addr) return '';
+    const m = addr.match(/(?:no\.?\s*[\d/A-Za-z-]+\s*,?\s*)?([^,]+(?:street|road|nagar|salai|lane|ave|avenue|cross|layout|colony))/i);
+    if (m && m[1]) return m[1].trim();
+    const parts = addr.split(',').map(s => s.trim()).filter(Boolean);
+    return parts.length > 1 ? parts[1] : '';
+  };
+
   const liveLocalityInfo = computeLiveLocalityAndCorridor(progress, employee);
   const liveLocalityArea = progress?.live_locality_area || progress?.live_locality || liveLocalityInfo.locality;
   const liveVicinityCorridor = progress?.live_vicinity_corridor || progress?.vicinity_corridor || liveLocalityInfo.corridor;
-  const liveRoad = progress?.live_road || liveLocalityInfo.road || 'Gandhi Street';
-  const liveCity = progress?.live_city || liveLocalityInfo.city || 'Chennai';
-  const liveDistrict = progress?.live_district || liveLocalityInfo.district || 'Chennai District';
-  const liveState = progress?.live_state || liveLocalityInfo.state || 'Tamil Nadu';
-  const livePincode = progress?.live_pincode || liveLocalityInfo.pincode || '600040';
-  const liveFormattedAddress = progress?.live_formatted_address || `${liveRoad}, ${liveLocalityArea}, ${liveCity}, ${liveState} - ${livePincode}, India`;
+  const candidateStreet = extractRoadFromAddress(progress?.submitted_address) || extractRoadFromAddress(employee?.hr_current_address);
+  const liveRoad = progress?.live_road || liveLocalityInfo.road || candidateStreet || 'Local Road';
+  const liveCity = progress?.live_city || liveLocalityInfo.city || employee?.hr_city || 'Chennai';
+  const liveDistrict = progress?.live_district || liveLocalityInfo.district || employee?.hr_district || 'Chennai District';
+  const liveState = progress?.live_state || liveLocalityInfo.state || employee?.hr_state || 'Tamil Nadu';
+  const livePincode = progress?.live_pincode || liveLocalityInfo.pincode || employee?.hr_pincode || '';
+  const liveFormattedAddress = progress?.live_formatted_address || `${liveRoad}, ${liveLocalityArea}, ${liveCity}, ${liveState} ${livePincode ? '- ' + livePincode + ', ' : ''}India`;
 
   // 1c. HR Locality / Area & Vicinity Corridor
   function computeHrLocalityAndCorridor(emp) {
@@ -2114,6 +2124,8 @@ export function CaseReview() {
                   hrLng={employee.hr_longitude}
                   capturedLat={progress?.latitude}
                   capturedLng={progress?.longitude}
+                  gpsAccuracy={progress?.gps_accuracy}
+                  capturedAt={locCapturedDateTimeDisplay}
                   hrAddress={employee.hr_current_address}
                   submittedAddress={progress?.submitted_address}
                   distanceMeters={progress?.distance_from_hr_meters}
@@ -2167,38 +2179,47 @@ export function CaseReview() {
                       <div style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '4px',
+                        justifyContent: 'center',
                         background: '#EEF2FF',
                         border: '1px solid #C7D2FE',
                         borderRadius: '4px',
-                        padding: '2px 6px',
+                        padding: '3px 6px',
                         fontSize: '0.72rem',
                         color: '#4338CA',
                         fontWeight: 700,
-                        marginBottom: '4px'
-                      }}>
+                        marginBottom: '6px',
+                        textAlign: 'center',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }} title={`Team Leader: ${card.meta.tlName} (${card.meta.tlId || ''})`}>
                         <span>TL: {card.meta.tlName} {card.meta.tlId && card.meta.tlId !== card.meta.tlName ? `(${card.meta.tlId})` : ''}</span>
                       </div>
                     )}
                     {card.meta.hasCoords ? (
-                      <>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: 'auto' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--primary)', fontWeight: 600 }}>
                           <MapPin size={12} color="var(--accent)" style={{ flexShrink: 0 }} />
-                          <span style={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>
+                          <span style={{ fontFamily: 'monospace', fontSize: '0.76rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {card.meta.lat}, {card.meta.lng}
                           </span>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-muted)', fontSize: '0.72rem', marginTop: '2px' }}>
-                          <span style={{ color: 'var(--success)', fontWeight: 600 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-muted)', fontSize: '0.72rem', marginTop: '3px', whiteSpace: 'nowrap' }}>
+                          <span style={{ color: '#059669', fontWeight: 700, whiteSpace: 'nowrap' }}>
                             {card.meta.accuracy !== 'N/A' ? `±${card.meta.accuracy}` : 'N/A'}
                           </span>
-                          <span>
-                            {card.meta.date} {card.meta.time}
+                          <span style={{ whiteSpace: 'nowrap', fontWeight: 500 }}>
+                            {card.meta.time}
                           </span>
                         </div>
-                      </>
+                        {card.meta.date && card.meta.date !== 'N/A' && (
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', color: 'var(--text-muted)', fontSize: '0.68rem', marginTop: '1px' }}>
+                            <span>{card.meta.date}</span>
+                          </div>
+                        )}
+                      </div>
                     ) : (
-                      <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.74rem', textAlign: 'center' }}>
+                      <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.74rem', textAlign: 'center', margin: 'auto 0' }}>
                         No live coordinates captured
                       </div>
                     )}
@@ -2579,13 +2600,18 @@ export function CaseReview() {
                     <div style={{
                       position: 'relative',
                       backgroundColor: '#0F172A',
-                      borderRadius: '6px',
+                      borderRadius: '8px',
                       overflow: 'hidden',
-                      height: '160px',
+                      aspectRatio: '1.586 / 1',
+                      minHeight: '220px',
+                      maxHeight: '340px',
+                      width: '100%',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      cursor: 'pointer'
+                      cursor: 'pointer',
+                      border: '1px solid #1E293B',
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.12)'
                     }}
                     onClick={() => setZoomImage({
                       src: frontDocView === 'enhanced' && progress?.documentEnhancedUrl ? progress.documentEnhancedUrl : progress.documentUrl,
@@ -2596,19 +2622,21 @@ export function CaseReview() {
                       <img
                         src={frontDocView === 'enhanced' && progress?.documentEnhancedUrl ? progress.documentEnhancedUrl : progress.documentUrl}
                         alt="Front Side"
-                        style={{ maxWidth: '100%', maxHeight: '160px', objectFit: 'contain' }}
+                        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                       />
                       <span style={{
                         position: 'absolute',
                         bottom: '6px',
                         right: '6px',
-                        backgroundColor: 'rgba(0,0,0,0.7)',
+                        backgroundColor: 'rgba(0,0,0,0.75)',
+                        backdropFilter: 'blur(4px)',
                         color: '#FFFFFF',
                         fontSize: '0.68rem',
-                        padding: '2px 6px',
-                        borderRadius: '3px'
+                        fontWeight: 600,
+                        padding: '3px 8px',
+                        borderRadius: '4px'
                       }}>
-                        {frontDocView === 'enhanced' ? '✨ Enhanced View' : 'Original View'} • Click to zoom
+                        {frontDocView === 'enhanced' ? '✨ Mobile Scanned & Enhanced' : 'Original Photo'} • Click to zoom
                       </span>
                     </div>
                   )}
@@ -2721,13 +2749,18 @@ export function CaseReview() {
                       <div style={{
                         position: 'relative',
                         backgroundColor: '#0F172A',
-                        borderRadius: '6px',
+                        borderRadius: '8px',
                         overflow: 'hidden',
-                        height: '160px',
+                        aspectRatio: '1.586 / 1',
+                        minHeight: '220px',
+                        maxHeight: '340px',
+                        width: '100%',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        cursor: 'pointer'
+                        cursor: 'pointer',
+                        border: '1px solid #1E293B',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.12)'
                       }}
                       onClick={() => setZoomImage({
                         src: backDocView === 'enhanced' && progress?.documentBackEnhancedUrl ? progress.documentBackEnhancedUrl : progress.documentBackUrl,
@@ -2738,19 +2771,21 @@ export function CaseReview() {
                         <img
                           src={backDocView === 'enhanced' && progress?.documentBackEnhancedUrl ? progress.documentBackEnhancedUrl : progress.documentBackUrl}
                           alt="Back Side"
-                          style={{ maxWidth: '100%', maxHeight: '160px', objectFit: 'contain' }}
+                          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                         />
                         <span style={{
                           position: 'absolute',
                           bottom: '6px',
                           right: '6px',
-                          backgroundColor: 'rgba(0,0,0,0.7)',
+                          backgroundColor: 'rgba(0,0,0,0.75)',
+                          backdropFilter: 'blur(4px)',
                           color: '#FFFFFF',
                           fontSize: '0.68rem',
-                          padding: '2px 6px',
-                          borderRadius: '3px'
+                          fontWeight: 600,
+                          padding: '3px 8px',
+                          borderRadius: '4px'
                         }}>
-                          {backDocView === 'enhanced' ? '✨ Enhanced View' : 'Original View'} • Click to zoom
+                          {backDocView === 'enhanced' ? '✨ Mobile Scanned & Enhanced' : 'Original Photo'} • Click to zoom
                         </span>
                       </div>
                     )}
@@ -3373,6 +3408,7 @@ export function CaseReview() {
                       ].map((item) => {
                         const matchVal = docMatch.components.hr?.[item.key] || docMatch.components.emp?.[item.key];
                         const isMatch = matchVal === 'MATCH';
+                        const isPartial = matchVal === 'PARTIAL MATCH' || matchVal === 'PARTIAL';
                         const isMissing = matchVal === 'N/A';
                         return (
                           <div
@@ -3385,14 +3421,14 @@ export function CaseReview() {
                               borderRadius: '4px',
                               fontSize: '0.76rem',
                               fontWeight: 600,
-                              backgroundColor: isMissing ? '#F1F5F9' : isMatch ? '#ECFDF5' : '#FEF2F2',
-                              color: isMissing ? '#64748B' : isMatch ? '#047857' : '#B91C1C',
-                              border: `1px solid ${isMissing ? '#E2E8F0' : isMatch ? '#A7F3D0' : '#FCA5A5'}`
+                              backgroundColor: isMissing ? '#F1F5F9' : isMatch ? '#ECFDF5' : isPartial ? '#FFFBEB' : '#FEF2F2',
+                              color: isMissing ? '#64748B' : isMatch ? '#047857' : isPartial ? '#B45309' : '#B91C1C',
+                              border: `1px solid ${isMissing ? '#E2E8F0' : isMatch ? '#A7F3D0' : isPartial ? '#FCD34D' : '#FCA5A5'}`
                             }}
                           >
                             <span>{item.label}:</span>
                             <span style={{ fontWeight: 700 }}>
-                              {isMissing ? 'Not Specified' : isMatch ? '✓ MATCH' : '✗ NOT MATCH'}
+                              {isMissing ? 'Not Specified' : isMatch ? '✓ MATCH' : isPartial ? '⚠ PARTIAL' : '✗ NOT MATCH'}
                             </span>
                           </div>
                         );

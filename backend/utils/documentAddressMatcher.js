@@ -124,42 +124,89 @@ function cleanDocumentText(rawText) {
  * Identify and isolate the residential address from document text.
  * Supports English, Hindi, Tamil, Telugu, Kannada, and Malayalam address labels.
  */
-function extractAddressFromText(rawText) {
+function extractAddressFromText(rawText, isTargetLatin = true) {
   if (!rawText || rawText.trim().length === 0) return '';
-  const cleaned = cleanDocumentText(rawText);
+  const cleanedText = cleanDocumentText(rawText);
 
-  // 1. Search for address labels across English, Hindi, Tamil, Telugu, Kannada, and Malayalam
-  const match = cleaned.match(
-    /(?:Original HR Address|Confirmed Address|Residential Address|Permanent Address|Current Address|Address|Addr|முகவரி|இருப்பிட முகவரி|நிரந்தர முகவரி|पता|स्थाई पता|वर्तमान पता|निवासी|చిరునామా|శాశ్వత చిరునామా|ప్రస్తుత చిరునామా|ವಿಳಾಸ|ಖಾಯಂ ವಿಳಾಸ|ಪ್ರಸ್ತುತ ವಿಳಾಸ|മേൽവിലാസം|സ്ഥിരമായ മേൽവിലാസം|നിലവിലെ മേൽവിലാസം)\s*[:\-\.]?\s*([^:]+?)(?=(?:Original HR Address|Confirmed Address|Residence Type|Submission Timestamp|Date of Joining|Date|Ref:|GPS|Declaration|Reviewer|This is|பிறந்த தேதி|ஆண்|பெண்|जन्म तिथि|पुरुष|महिला|పుట్టిన తేదీ|ಹುಟ್ಟಿದ ದಿನಾಂಕ|ജനന തീയതി|$))/i
-  );
+  let rawAddr = '';
 
-  if (match && match[1].trim().length > 10) {
-    let addr = match[1].trim().replace(/^,\s*|,\s*$/g, '');
-    return addr;
+  // 1. If target is Latin, search specifically for English Address block first
+  // Note: address blocks may contain internal colons (e.g. "Address: C/O: Elumalai...", "PO:Egmore", "DIST:Chennai")
+  // So we capture continuously through the 6-digit Indian PIN code.
+  if (isTargetLatin) {
+    const engMatch = cleanedText.match(
+      /(?:Residential Address|Permanent Address|Current Address|Confirmed Address|Original HR Address|Address|Addr)\s*[:\-\.]?\s*([\s\S]+?\b[1-9][0-9]{5}\b)/i
+    );
+    if (engMatch && engMatch[1].trim().length >= 10) {
+      rawAddr = engMatch[1].trim();
+    }
   }
 
-  // 2. Search for Care-of / Son-of / Daughter-of / Wife-of patterns in English and Indian languages
-  const coMatch = cleaned.match(
-    /(?:C\/O|S\/O|D\/O|W\/O|Care of|Son of|Daughter of|Wife of|த\/பெ|க\/பெ|மனைவி|மகன்|மகள்|आत्मज|सुपुत्र|सुपुत्री|पत्नी|केयर ऑफ|కుమారుడు|కుమార్తె|భార్య|ಮಗ|ಮಗಳು|ಹೆಂಡತಿ|മകൻ|മകൾ|ഭാര്യ)\s*[:\-\.]?\s*([^,]+?,[\w\s,/-]{10,160}\b[1-9][0-9]{5}\b[\w\s,-]{0,35})/i
-  );
-  if (coMatch && coMatch[1].trim().length > 12) {
-    return coMatch[0].trim().replace(/^,\s*|,\s*$/g, '');
+  // 2. Multilingual address label check across English, Tamil, Hindi, Telugu, Kannada, Malayalam
+  if (!rawAddr) {
+    const multiMatch = cleanedText.match(
+      /(?:Residential Address|Permanent Address|Current Address|Confirmed Address|Original HR Address|Address|Addr|முகவரி|இருப்பிட முகவரி|நிரந்தர முகவரி|पता|स्थाई पता|वर्तमान पता|निवासी|చిరునామా|శాశ్వత చిరునామా|ప్రస్తుత చిరునామా|ವಿಳಾಸ|ಖಾಯಂ ವಿಳಾಸ|ಪ್ರಸ್ತುತ ವಿಳಾಸ|മേൽവിലാസം|സ്ഥിരമായ മേൽവിലാസം|നിലവിലെ മേൽവിലാസം)\s*[:\-\.]?\s*([\s\S]+?\b[1-9][0-9]{5}\b)/i
+    );
+    if (multiMatch && multiMatch[1].trim().length >= 10) {
+      rawAddr = multiMatch[1].trim();
+    }
   }
 
-  // 3. Search for block with door number / street + 6-digit Indian pincode
-  const pinMatch = cleaned.match(
-    /(?:(?:no\.?|door|flat|plot|எண்|सं|నెం|ಸಂ|നം)?\s*[\d/A-Za-z-]+\s*,)?[\w\s,/\-\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F]{8,150}\b[1-9][0-9]{5}\b[\w\s,\-\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F]{0,35}/i
-  );
-  if (pinMatch) {
-    return pinMatch[0].trim().replace(/^,\s*|,\s*$/g, '');
+  // 3. Search for Care-of / Son-of / Daughter-of / Wife-of patterns in English and Indian languages
+  if (!rawAddr) {
+    const coMatch = cleanedText.match(
+      /(?:C\/O|S\/O|D\/O|W\/O|Care of|Son of|Daughter of|Wife of|த\/பெ|க\/பெ|மனைவி|மகன்|மகள்|आत्मज|सुपुत्र|सुपुत्री|पत्नी|केयर ऑफ|కుమారుడు|కుమార్తె|భార్య|ಮಗ|ಮಗಳು|ಹೆಂಡತಿ|മകൻ|മകൾ|ഭാര്യ)\s*[:\-\.]?\s*([\s\S]+?\b[1-9][0-9]{5}\b)/i
+    );
+    if (coMatch && coMatch[0].trim().length >= 12) {
+      rawAddr = coMatch[0].trim();
+    }
   }
 
-  // 4. If text is relatively short (e.g. an address card snippet), return cleaned text
-  if (cleaned.length <= 160) {
-    return cleaned;
+  // 4. Search for block with door number / street + 6-digit Indian pincode
+  if (!rawAddr) {
+    const pinMatch = cleanedText.match(
+      /(?:(?:no\.?|door|flat|plot|எண்|सं|నెం|ಸಂ|നം)?\s*[\d/A-Za-z-]+\s*[,:\-\s])[\s\S]+?\b[1-9][0-9]{5}\b/i
+    );
+    if (pinMatch) {
+      rawAddr = pinMatch[0].trim();
+    }
   }
 
-  return '';
+  // 5. Fallback: If text is relatively short (e.g. an address card snippet)
+  if (!rawAddr) {
+    if (cleanedText.length <= 160 && /\b[1-9][0-9]{5}\b/.test(cleanedText)) {
+      rawAddr = cleanedText;
+    } else {
+      return '';
+    }
+  }
+
+  // Sanitize and clean the extracted address string
+  let result = rawAddr;
+
+  if (isTargetLatin) {
+    // Strip isolated non-ASCII glyphs (e.g. Tamil/Telugu OCR noise in English block)
+    result = result.replace(/[^\x00-\x7F]+/g, ' ');
+    // Strip OCR artifact 'see <number>'
+    result = result.replace(/\bsee\s*\d+\b/gi, ' ');
+    // Strip isolated numbers before labels e.g. '8 DIST:' -> 'DIST:'
+    result = result.replace(/\b\d+\s+(DIST:)/gi, '$1');
+  }
+
+  // Truncate anything trailing after the 6-digit pincode (such as stray Kannada glyphs 'ಸವ್')
+  result = result.replace(/(\b[1-9][0-9]{5}\b)[\s\S]*$/i, (m, p1) => p1);
+
+  // Clean formatting: commas, extra spaces, line breaks
+  result = result
+    .replace(/[\r\n\t]+/g, ', ')
+    .replace(/\b(DOCTOR|DR|NO)\s*,\s*/gi, '$1 ')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/,\s*,+/g, ', ')
+    .replace(/^,\s*|,\s*$/g, '')
+    .trim();
+
+  return result;
 }
 
 /**
@@ -186,10 +233,6 @@ function levenshteinDistance(a, b) {
   }
   return dp[m][n];
 }
-
-/**
- * String similarity ratio (0.0 to 1.0)
- */
 function stringSimilarity(str1, str2) {
   if (!str1 || !str2) return 0;
   if (str1 === str2) return 1;
@@ -215,16 +258,57 @@ function normalizeName(name) {
 /**
  * Clean extracted name string across English and Indian scripts
  */
-function cleanExtractedName(rawName) {
+function cleanExtractedName(rawName, candidateNames = []) {
   if (!rawName) return '';
   let cleaned = rawName
     .replace(/[\r\n\t]+/g, ' ')
     .replace(/\b(?:mr|ms|mrs|dr|shri|smt|thiru|selvan|selvi|திரு|திருமதி|श्री|श्रीमती|శ్రీ|శ్రీమతి|ಶ್ರೀ|ಶ್ರೀಮತಿ|ശ്രീ|ശ്രീമതി)\.?\s+/gi, '')
     .replace(/\b(?:s\/o|d\/o|w\/o|c\/o|s\/w\/d of|so|do|wo|co|த\/பெ|க\/பெ|மனைவி|மகன்|மகள்|आत्मज|सुपुत्र|सुपुत्री|पत्नी|केयर ऑफ|కుమారుడు|కుమార్తె|భార్య|ಮಗ|ಮಗಳು|ಹೆಂಡತಿ|മകൻ|മകൾ|ഭാര്യ)[\s\S]*/i, '')
-    .replace(/[^a-zA-Z\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\s\.]/g, '')
-    .replace(/\s+/g, ' ')
     .trim();
 
+  const cands = (Array.isArray(candidateNames) ? candidateNames : [candidateNames]).filter(Boolean);
+  const isCandidateLatin = cands.length > 0 && cands.some(c => /^[A-Za-z\s.]+$/.test(c.trim()));
+
+  if (isCandidateLatin) {
+    // If target candidate is in Latin script, strip isolated non-Latin Indic characters and symbols
+    cleaned = cleaned.replace(/[\u0900-\u0D7F]+/g, ' ');
+    cleaned = cleaned.replace(/[^A-Za-z\s.]/g, ' ');
+  } else {
+    cleaned = cleaned.replace(/[^a-zA-Z\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\s\.]/g, ' ');
+  }
+
+  // Tokenize and clean stray OCR noise
+  let tokens = cleaned.split(/\s+/).filter(Boolean);
+
+  // Strip leading and trailing 1-letter lowercase noise tokens (e.g. 'y', 'x')
+  while (tokens.length > 1 && tokens[tokens.length - 1].length === 1 && /^[a-z]$/.test(tokens[tokens.length - 1])) {
+    tokens.pop();
+  }
+  while (tokens.length > 1 && tokens[0].length === 1 && /^[a-z]$/.test(tokens[0])) {
+    tokens.shift();
+  }
+
+  // If candidate is Latin and we have multiple tokens, verify against candidate words
+  if (isCandidateLatin && tokens.length > 1) {
+    const candWords = cands.flatMap(c => c.toLowerCase().split(/\s+/).filter(w => w.length >= 3));
+    const matchingTokens = tokens.filter(t => {
+      const tLower = t.toLowerCase();
+      return candWords.some(cw => cw === tLower || stringSimilarity(cw, tLower) >= 0.75);
+    });
+    if (matchingTokens.length > 0) {
+      const refined = tokens.filter(t => {
+        const tLower = t.toLowerCase();
+        if (candWords.some(cw => cw === tLower || stringSimilarity(cw, tLower) >= 0.75)) return true;
+        if (/^[A-Z]\.?$/.test(t)) return true; // valid uppercase initial
+        return false;
+      });
+      if (refined.length > 0) {
+        tokens = refined;
+      }
+    }
+  }
+
+  cleaned = tokens.join(' ').trim();
   if (cleaned.length < 2) return '';
   return cleaned;
 }
@@ -244,9 +328,9 @@ function extractNameFromText(rawText, docType = '', candidateNames = []) {
   let surname = '';
   for (const line of lines) {
     const gnMatch = line.match(/(?:Given\s*Name[s]?|கொடுக்கப்பட்ட\s*பெயர்|दिया\s*गया\s*नाम|ఇచ్చిన\s*పేరు|ಹೆಸರು|നൽകിയ\s*പേര്)\s*[:\-\.]\s*([A-Za-z\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\s\.]+)/i);
-    if (gnMatch) givenName = cleanExtractedName(gnMatch[1]);
-    const snMatch = line.match(/(?:Surname|குடும்பப்\s*பெயர்|उपनाम|ఇంటిపేరు|ಉಪನಾಮ|കുടുംബപ്പേര്)\s*[:\-\.]\s*([A-Za-z\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\s\.]+)/i);
-    if (snMatch) surname = cleanExtractedName(snMatch[1]);
+    if (gnMatch) givenName = cleanExtractedName(gnMatch[1], candidateNames);
+    const snMatch = line.match(/(?:Surname|குடும்பப்\s*பெயர்|उपनाम|ఇంటిపేరు|ಉಪನಾಮ|കുടുംബപ്പேര്)\s*[:\-\.]\s*([A-Za-z\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\s\.]+)/i);
+    if (snMatch) surname = cleanExtractedName(snMatch[1], candidateNames);
   }
   if (givenName && surname) {
     return `${givenName} ${surname}`;
@@ -260,7 +344,7 @@ function extractNameFromText(rawText, docType = '', candidateNames = []) {
   for (const line of lines) {
     const match = line.match(labelRegex);
     if (match && match[1]) {
-      const candidate = cleanExtractedName(match[1]);
+      const candidate = cleanExtractedName(match[1], candidateNames);
       if (candidate.length >= 3) {
         return candidate;
       }
@@ -271,7 +355,7 @@ function extractNameFromText(rawText, docType = '', candidateNames = []) {
   // Look for line immediately before DOB / Year of Birth / Gender in English and Indian languages
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (/(?:DOB|Year of Birth|Birth|பிறந்த தேதி|ஆண்|பெண்|Male|Female|जन्म तिथि|पुरुष|महिला|पुట్టిన తేదీ|పురుషుడు|స్త్రీ|ಹುಟ್ಟಿದ ದಿನಾಂಕ|ಪುರುಷ|ಮಹಿಳೆ|ജനന തീയതി|പുരുഷൻ|സ്ത്രീ)\b/i.test(line)) {
+    if (/(?:DOB|Year of Birth|Birth|பிறந்த தேதி|பிறந்த நாள்|ஆண்|பெண்|Male|Female|जन्म तिथि|पुरुष|महिला|पुట్టిన తేదీ|పురుషుడు|స్త్రీ|ಹುಟ್ಟಿದ ದಿನಾಂಕ|ಪುರುಷ|ಮಹಿಳೆ|ജനന തീയതി|പുരുഷൻ|സ്ത്രീ)\b/i.test(line)) {
       for (let prevIdx = i - 1; prevIdx >= Math.max(0, i - 3); prevIdx--) {
         const prevLine = lines[prevIdx];
         if (
@@ -279,7 +363,7 @@ function extractNameFromText(rawText, docType = '', candidateNames = []) {
           !/\d{4}/.test(prevLine) &&
           /[A-Za-z\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F]{3,}/.test(prevLine)
         ) {
-          const candidate = cleanExtractedName(prevLine);
+          const candidate = cleanExtractedName(prevLine, candidateNames);
           if (candidate.length >= 3) {
             return candidate;
           }
@@ -312,7 +396,7 @@ function extractNameFromText(rawText, docType = '', candidateNames = []) {
       const sim = Math.max(stringSimilarity(normLine, cand), stringSimilarity(transLine, cand));
       if (sim > bestFuzzyScore) {
         bestFuzzyScore = sim;
-        bestFuzzyLine = cleanExtractedName(line);
+        bestFuzzyLine = cleanExtractedName(line, candidateNames);
       }
     }
   }
@@ -328,7 +412,7 @@ function extractNameFromText(rawText, docType = '', candidateNames = []) {
       /^[A-Za-z\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\s\.]+$/.test(line) &&
       !/(?:government|india|republic|driving|licence|election|commission|passport|agreement|bill|consumer|gas|lpg|authority|सरकार|प्राधिकरण|அரசு|ஆணையம்|ప్రభుత్వం|ಸರ್ಕಾರ|സർക്കാർ)/i.test(line)
     ) {
-      const candidate = cleanExtractedName(line);
+      const candidate = cleanExtractedName(line, candidateNames);
       if (candidate.split(' ').length >= 1 && candidate.length >= 3) {
         return candidate;
       }
@@ -549,7 +633,7 @@ function normalizeForComparison(str) {
  * Evaluates: House Number, Street, Area, City, State, and Pincode.
  * Supports cross-script phonetic matching (transliterated Indic text vs. English HR address).
  */
-function compareAddressComponents(targetAddress, documentText, extractedAddress) {
+function compareAddressComponents(targetAddress, documentText, extractedAddress, options = {}) {
   if (!documentText || documentText.trim().length < 8) {
     return {
       match: 'NOT MATCH',
@@ -675,27 +759,84 @@ function compareAddressComponents(targetAddress, documentText, extractedAddress)
   } else {
     totalScore += 15;
     streetStatus = 'MATCH';
-  }
-
-  // 4. AREA / LOCALITY (15 pts)
+  }  // 4. AREA / LOCALITY (15 pts)
   let areaStatus = 'NOT MATCH';
   const areaKeywords = [
-    'vinayagapuram', 'surapet', 'velmurugan', 'anna nagar', 't nagar', 'velachery',
-    'ambattur', 'tambaram', 'guindy', 'porur', 'madhavaram', 'redhills', 'vadapalani',
-    'perambur', 'mylapore', 'alwarpet', 'adyar', 'kolathur', 'royapettah', 'marathahalli',
-    'whitefield', 'koramangala', 'indiranagar', 'jayanagar', 'hitec city', 'gachibowli',
-    'madhapur', 'banjara hills', 'jubilee hills', 'andheri', 'bandra', 'borivali', 'rohini',
-    'dwarka', 'connaught place', 'saket'
+    // Chennai & Tamil Nadu localities
+    'egmore', 'santhosh nagar', 'dr santhosh nagar', 'doctor santhosh nagar', 'vinayagapuram',
+    'surapet', 'velmurugan', 'anna nagar', 't nagar', 'velachery', 'ambattur', 'tambaram',
+    'guindy', 'porur', 'madhavaram', 'redhills', 'vadapalani', 'perambur', 'mylapore',
+    'alwarpet', 'adyar', 'kolathur', 'royapettah', 'chromepet', 'pallavaram', 'saidapet',
+    'sholinganallur', 'thiruvanmiyur', 'besant nagar', 'kilpauk', 'teynampet', 'mandaveli',
+    'puzhal', 'villivakkam', 'avadi', 'nungambakkam', 'kodambakkam', 'triplicane', 'chepauk',
+    'chintadripet', 'george town', 'royapuram', 'tondiarpet', 'washermanpet',
+    // Bangalore localities
+    'marathahalli', 'whitefield', 'koramangala', 'indiranagar', 'jayanagar', 'jp nagar',
+    'hsr layout', 'electronic city', 'bellandur', 'hebbal', 'banashankari', 'rajajinagar',
+    'malleshwaram', 'btm layout',
+    // Hyderabad localities
+    'hitec city', 'gachibowli', 'madhapur', 'banjara hills', 'jubilee hills', 'kondapur',
+    'kukatpally', 'ameerpet', 'begumpet', 'secunderabad',
+    // Mumbai localities
+    'andheri', 'bandra', 'borivali', 'dadar', 'juhu', 'malad', 'goregaon', 'thane', 'navi mumbai',
+    'kurla', 'chembur', 'powai',
+    // Delhi localities
+    'rohini', 'dwarka', 'connaught place', 'saket', 'lajpat nagar', 'janakpuri', 'karol bagh',
+    'pitampura', 'vasant kunj', 'hauz khas'
   ];
 
   let areaMatched = false;
+
+  // a) Check explicitly registered areaKeywords
   for (const a of areaKeywords) {
     if (
       rawTargetLower.includes(a) &&
-      (rawDocLower.includes(a) || cleanDocSpaceless.includes(a) || transDocLower.includes(a) || cleanTransSpaceless.includes(a))
+      (rawDocLower.includes(a) || cleanDocSpaceless.includes(a.replace(/\s+/g, '')) ||
+       transDocLower.includes(a) || cleanTransSpaceless.includes(a.replace(/\s+/g, '')))
     ) {
       areaMatched = true;
       break;
+    }
+  }
+
+  // b) Check explicit employee.hr_area if provided
+  if (!areaMatched) {
+    const candidateAreaStr = (options.targetArea || options.employee?.hr_area || '').toLowerCase().trim();
+    if (candidateAreaStr && candidateAreaStr.length >= 3) {
+      if (
+        rawDocLower.includes(candidateAreaStr) ||
+        cleanDocSpaceless.includes(candidateAreaStr.replace(/\s+/g, '')) ||
+        transDocLower.includes(candidateAreaStr) ||
+        cleanTransSpaceless.includes(candidateAreaStr.replace(/\s+/g, ''))
+      ) {
+        areaMatched = true;
+      }
+    }
+  }
+
+  // c) Dynamic token matching from target address
+  // Extract tokens that represent localities/areas (length >= 4, excluding city, state, pin, street stop words)
+  if (!areaMatched) {
+    const nonAreaWords = new Set([
+      'india', 'tamil', 'nadu', 'tamilnadu', 'chennai', 'street', 'road', 'salai',
+      'lane', 'cross', 'main', 'door', 'flat', 'plot', 'house', 'nagar', 'near',
+      'opp', 'opposite', 'behind', 'beside', 'floor', 'block', 'phase'
+    ]);
+    const areaTokens = targetAddress
+      .split(/[\s,./-]+/)
+      .map(w => w.trim().toLowerCase())
+      .filter(w => w.length >= 4 && !nonAreaWords.has(w) && !/^\d+$/.test(w));
+
+    for (const token of areaTokens) {
+      if (
+        rawDocLower.includes(token) ||
+        cleanDocSpaceless.includes(token) ||
+        transDocLower.includes(token) ||
+        cleanTransSpaceless.includes(token)
+      ) {
+        areaMatched = true;
+        break;
+      }
     }
   }
 
@@ -745,32 +886,89 @@ function compareAddressComponents(targetAddress, documentText, extractedAddress)
     }
   }
 
-  // 6. STATE (5 pts) - Multilingual dictionary
+  // 6. STATE (5 pts) - Multilingual dictionary with intelligent city/pincode inference
   let stateStatus = 'NOT MATCH';
   const stateMultilingual = [
     { en: 'tamil nadu', aliases: ['tamil nadu', 'tamilnadu', 'தமிழ்நாடு', 'तमिलनाडु', 'తమిళనాడు', 'ತಮಿಳುನಾಡು', 'തമിഴ്നാട്'] },
     { en: 'karnataka', aliases: ['karnataka', 'ಕರ್ನಾಟಕ', 'कर्नाटक', 'కర్ణాటక', 'കർണാടക', 'கர்நாடகா'] },
-    { en: 'kerala', aliases: ['kerala', 'കേരളം', 'केरल', 'కేరళ', 'ಕೇರಳ', 'கேரளா'] },
+    { en: 'kerala', aliases: ['kerala', 'കേരളം', 'கேரளா', 'केरल', 'కేరళ', 'ಕೇರಳ'] },
     { en: 'andhra pradesh', aliases: ['andhra pradesh', 'andhra', 'ఆంధ్ర ప్రదేశ్', 'आंध्र प्रदेश', 'ಆಂಧ್ರ ಪ್ರದೇಶ', 'ആന്ധ്രാപ്രദേശ്'] },
     { en: 'telangana', aliases: ['telangana', 'తెలంగాణ', 'तेलंगाना', 'ತೆಲಂಗಾಣ', 'തെലങ്കാന'] },
     { en: 'maharashtra', aliases: ['maharashtra', 'महाराष्ट्र', 'మహారాష్ట్ర', 'ಮಹಾರಾಷ್ಟ್ರ', 'മഹാരാഷ്ട്ര'] },
     { en: 'uttar pradesh', aliases: ['uttar pradesh', 'उत्तर प्रदेश', 'యు.పి'] },
-    { en: 'delhi', aliases: ['delhi', 'दिल्ली', 'దిల్లీ', 'ದೆಹಲಿ'] }
+    { en: 'delhi', aliases: ['delhi', 'दिल्ली', 'దిల్లీ', 'ದೆಹಲಿ'] },
+    { en: 'west bengal', aliases: ['west bengal', 'पश्चिम बंगाल', 'పశ్చిమ బెంగాల్', 'পশ্চিমবঙ্গ'] }
   ];
 
-  for (const stObj of stateMultilingual) {
-    const isTargetState = stObj.aliases.some(alias => rawTargetLower.includes(alias));
-    if (isTargetState) {
-      const isDocState = stObj.aliases.some(alias =>
-        rawDocLower.includes(alias) || cleanDocSpaceless.includes(alias.replace(/\s+/g, '')) ||
-        transDocLower.includes(alias) || cleanTransSpaceless.includes(alias.replace(/\s+/g, ''))
-      );
-      if (isDocState) {
+  // Determine target state:
+  // a) Explicitly in target address text
+  let targetStateObj = stateMultilingual.find(st => st.aliases.some(alias => rawTargetLower.includes(alias)));
+
+  // b) Or from employee.hr_state / options.targetState
+  if (!targetStateObj) {
+    const candidateStateStr = (options.targetState || options.employee?.hr_state || options.employee?.state || '').toLowerCase();
+    if (candidateStateStr) {
+      targetStateObj = stateMultilingual.find(st => st.aliases.some(alias => candidateStateStr.includes(alias)));
+    }
+  }
+
+  // c) Or inferred from target city (Chennai -> Tamil Nadu, Bengaluru -> Karnataka, etc.)
+  if (!targetStateObj) {
+    const candidateCityStr = (options.targetCity || options.employee?.hr_city || rawTargetLower).toLowerCase();
+    if (/\b(?:chennai|madras|coimbatore|madurai|trichy|tiruchirappalli|salem|vellore|tirunelveli|erode|kanchipuram|thanjavur)\b/i.test(candidateCityStr)) {
+      targetStateObj = stateMultilingual.find(st => st.en === 'tamil nadu');
+    } else if (/\b(?:bengaluru|bangalore|mysuru|mysore|hubli|mangalore|belgaum|shimoga)\b/i.test(candidateCityStr)) {
+      targetStateObj = stateMultilingual.find(st => st.en === 'karnataka');
+    } else if (/\b(?:hyderabad|secunderabad|warangal)\b/i.test(candidateCityStr)) {
+      targetStateObj = stateMultilingual.find(st => st.en === 'telangana');
+    } else if (/\b(?:visakhapatnam|vizag|vijayawada|guntur|tirupati|kakinada|nellore)\b/i.test(candidateCityStr)) {
+      targetStateObj = stateMultilingual.find(st => st.en === 'andhra pradesh');
+    } else if (/\b(?:kochi|cochin|thiruvananthapuram|trivandrum|kozhikode|calicut|thrissur)\b/i.test(candidateCityStr)) {
+      targetStateObj = stateMultilingual.find(st => st.en === 'kerala');
+    } else if (/\b(?:mumbai|bombay|pune|nagpur|nashik|thane|aurangabad)\b/i.test(candidateCityStr)) {
+      targetStateObj = stateMultilingual.find(st => st.en === 'maharashtra');
+    } else if (/\b(?:delhi|new delhi)\b/i.test(candidateCityStr)) {
+      targetStateObj = stateMultilingual.find(st => st.en === 'delhi');
+    } else if (/\b(?:kolkata|calcutta|howrah)\b/i.test(candidateCityStr)) {
+      targetStateObj = stateMultilingual.find(st => st.en === 'west bengal');
+    } else if (/\b(?:lucknow|kanpur|noida|varanasi|agra|prayagraj|ghaziabad)\b/i.test(candidateCityStr)) {
+      targetStateObj = stateMultilingual.find(st => st.en === 'uttar pradesh');
+    }
+  }
+
+  // d) Or inferred from 6-digit pincode range
+  if (!targetStateObj && targetPin) {
+    const pinNum = parseInt(targetPin, 10);
+    if (pinNum >= 600000 && pinNum <= 649999) targetStateObj = stateMultilingual.find(st => st.en === 'tamil nadu');
+    else if (pinNum >= 560000 && pinNum <= 599999) targetStateObj = stateMultilingual.find(st => st.en === 'karnataka');
+    else if (pinNum >= 670000 && pinNum <= 699999) targetStateObj = stateMultilingual.find(st => st.en === 'kerala');
+    else if (pinNum >= 500000 && pinNum <= 509999) targetStateObj = stateMultilingual.find(st => st.en === 'telangana');
+    else if (pinNum >= 510000 && pinNum <= 539999) targetStateObj = stateMultilingual.find(st => st.en === 'andhra pradesh');
+    else if (pinNum >= 400000 && pinNum <= 449999) targetStateObj = stateMultilingual.find(st => st.en === 'maharashtra');
+    else if (pinNum >= 110000 && pinNum <= 110099) targetStateObj = stateMultilingual.find(st => st.en === 'delhi');
+    else if (pinNum >= 200000 && pinNum <= 289999) targetStateObj = stateMultilingual.find(st => st.en === 'uttar pradesh');
+    else if (pinNum >= 700000 && pinNum <= 749999) targetStateObj = stateMultilingual.find(st => st.en === 'west bengal');
+  }
+
+  if (targetStateObj) {
+    const isDocState = targetStateObj.aliases.some(alias =>
+      rawDocLower.includes(alias) || cleanDocSpaceless.includes(alias.replace(/\s+/g, '')) ||
+      transDocLower.includes(alias) || cleanTransSpaceless.includes(alias.replace(/\s+/g, ''))
+    );
+    if (isDocState) {
+      totalScore += 5;
+      stateStatus = 'MATCH';
+    } else {
+      // Check if document mentions country India and city/pincode matches
+      if (rawDocLower.includes('india') && (cityStatus === 'MATCH' || pincodeStatus === 'MATCH')) {
         totalScore += 5;
         stateStatus = 'MATCH';
-        break;
       }
     }
+  } else {
+    // If no state could be inferred from target or document, neutral match
+    totalScore += 5;
+    stateStatus = 'MATCH';
   }
 
   totalScore = Math.max(0, Math.min(100, totalScore));
@@ -807,12 +1005,21 @@ function compareAddressComponents(targetAddress, documentText, extractedAddress)
  * Supports all 6 Indian languages (English, Hindi, Tamil, Telugu, Kannada, Malayalam)
  * Detects document language, extracts name & address, compares with HR records, and routes
  * unclear / failed OCR to REVIEW REQUIRED.
+ */
+const documentMatchCache = new Map();
+
+/**
+ * Perform comprehensive document address extraction, OCR language detection,
+ * and multi-component address match scoring.
  *
  * @param {Object} employee - Employee database record
  * @param {Object} progress - Verification progress record
+ * @param {Object} [options]
+ * @param {boolean} [options.forceRefresh]
+ * @param {boolean} [options.fastOnly]
  * @returns {Promise<Object>} Complete matching report
  */
-async function performDocumentAddressMatch(employee, progress) {
+async function performDocumentAddressMatch(employee, progress, options = {}) {
   if (!progress || !progress.document_path) {
     return {
       success: false,
@@ -831,22 +1038,70 @@ async function performDocumentAddressMatch(employee, progress) {
     };
   }
 
+  const cacheKey = `${employee?.employee_id || ''}:${progress?.document_path || ''}:${progress?.document_back_path || ''}`;
+  if (!options.forceRefresh && documentMatchCache.has(cacheKey)) {
+    return documentMatchCache.get(cacheKey);
+  }
+
+  // If already persisted in verification_progress and not forcing refresh, return it
+  if (!options.forceRefresh && progress?.document_address_match) {
+    try {
+      const parsed = typeof progress.document_address_match === 'string'
+        ? JSON.parse(progress.document_address_match)
+        : progress.document_address_match;
+      if (parsed && typeof parsed === 'object') {
+        documentMatchCache.set(cacheKey, parsed);
+        return parsed;
+      }
+    } catch (_) {}
+  }
+
+  // If fastOnly requested and not cached, do not run heavy OCR synchronously on page load
+  if (options.fastOnly) {
+    return null;
+  }
+
+  const saveAndReturn = (matchResult) => {
+    documentMatchCache.set(cacheKey, matchResult);
+    if (employee?.employee_id) {
+      try {
+        const { query } = require('../db/database');
+        if (query && query.run) {
+          query.run(
+            'UPDATE verification_progress SET document_address_match = ? WHERE employee_id = ?',
+            [JSON.stringify(matchResult), employee.employee_id]
+          ).catch(() => {});
+        }
+      } catch (_) {}
+    }
+    return matchResult;
+  };
+
   const docPath = progress.document_path;
   const backDocPath = progress.document_back_path;
 
+  // OCR runs on the perspective-corrected, upright enhanced images per requirement
+  const frontScanPath = (progress.document_enhanced_path && fs.existsSync(progress.document_enhanced_path))
+    ? progress.document_enhanced_path
+    : docPath;
+
+  const backScanPath = (progress.document_back_enhanced_path && fs.existsSync(progress.document_back_enhanced_path))
+    ? progress.document_back_enhanced_path
+    : backDocPath;
+
   let rawDocText = '';
-  if (docPath && fs.existsSync(docPath)) {
+  if (frontScanPath && fs.existsSync(frontScanPath)) {
     try {
-      rawDocText = await extractTextFromDocument(docPath);
+      rawDocText = await extractTextFromDocument(frontScanPath);
     } catch (fErr) {
       console.warn('Front document OCR error:', fErr.message);
     }
   }
 
   let backDocText = '';
-  if (backDocPath && fs.existsSync(backDocPath)) {
+  if (backScanPath && fs.existsSync(backScanPath)) {
     try {
-      backDocText = await extractTextFromDocument(backDocPath);
+      backDocText = await extractTextFromDocument(backScanPath);
     } catch (bErr) {
       console.warn('Back document OCR error:', bErr.message);
     }
@@ -860,7 +1115,10 @@ async function performDocumentAddressMatch(employee, progress) {
   const combinedDocText = [rawDocText, backDocText].filter(Boolean).join('\n');
   const langDetection = detectDocumentLanguage(combinedDocText);
 
-  const extractedAddress = extractAddressFromText(combinedDocText) || extractAddressFromText(backDocText) || extractAddressFromText(rawDocText);
+  const isTargetLatin = !/[\u0900-\u0D7F]/.test(hrAddress || empConfirmedAddress || '');
+  const extractedAddress = extractAddressFromText(combinedDocText, isTargetLatin) ||
+                           extractAddressFromText(backDocText, isTargetLatin) ||
+                           extractAddressFromText(rawDocText, isTargetLatin);
   const extractedName = extractNameFromText(combinedDocText, progress?.document_type, [hrName, empConfirmedName]) ||
                         extractNameFromText(rawDocText, progress?.document_type, [hrName, empConfirmedName]) ||
                         extractNameFromText(backDocText, progress?.document_type, [hrName, empConfirmedName]);
@@ -887,7 +1145,7 @@ async function performDocumentAddressMatch(employee, progress) {
 
   // If OCR failed or address could not be read clearly, route for HR/BGV review
   if (!addressCouldBeRead) {
-    return {
+    return saveAndReturn({
       success: true,
       documentAvailable: true,
       documentType: progress.document_type || 'Address Proof',
@@ -919,11 +1177,23 @@ async function performDocumentAddressMatch(employee, progress) {
         hr: {},
         emp: {}
       }
-    };
+    });
   }
 
-  const hrComparison = compareAddressComponents(hrAddress, combinedDocText, extractedAddress);
-  const empComparison = compareAddressComponents(empConfirmedAddress, combinedDocText, extractedAddress);
+  const hrComparison = compareAddressComponents(hrAddress, combinedDocText, extractedAddress, {
+    employee,
+    targetCity: employee?.hr_city,
+    targetState: employee?.hr_state,
+    targetPin: employee?.hr_pincode,
+    targetArea: employee?.hr_area
+  });
+  const empComparison = compareAddressComponents(empConfirmedAddress, combinedDocText, extractedAddress, {
+    employee,
+    targetCity: employee?.hr_city,
+    targetState: employee?.hr_state,
+    targetPin: employee?.hr_pincode,
+    targetArea: employee?.hr_area
+  });
 
   // Address matching status
   const isHrMatch = hrComparison.match === 'MATCH';
@@ -976,7 +1246,7 @@ async function performDocumentAddressMatch(employee, progress) {
 
   const formatUrl = (p) => p ? `/uploads/${path.basename(p)}` : null;
 
-  return {
+  return saveAndReturn({
     success: true,
     documentAvailable: true,
     decision,
@@ -1017,7 +1287,7 @@ async function performDocumentAddressMatch(employee, progress) {
       hr: hrComparison.components,
       emp: empComparison.components
     }
-  };
+  });
 }
 
 module.exports = {

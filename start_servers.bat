@@ -58,7 +58,6 @@ REM Auto-open browser
 timeout /t 3 >nul 2>&1
 echo [INFO] Opening HR / Admin Portal in default browser...
 start http://localhost:3000/admin/login
-
 echo.
 echo =======================================================
 echo  Servers started successfully in ANY IP / LAN Mode!

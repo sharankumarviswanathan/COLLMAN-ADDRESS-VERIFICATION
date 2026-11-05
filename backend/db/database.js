@@ -110,7 +110,8 @@ async function initDatabase() {
       { name: 'joint_selfie_accuracy', type: 'REAL' },
       { name: 'joint_selfie_captured_at', type: 'TEXT' },
       { name: 'joint_selfie_tl_id', type: 'TEXT' },
-      { name: 'joint_selfie_tl_name', type: 'TEXT' }
+      { name: 'joint_selfie_tl_name', type: 'TEXT' },
+      { name: 'document_address_match', type: 'TEXT' }
     ];
 
     for (const col of expectedVpCols) {

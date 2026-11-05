@@ -550,7 +550,7 @@ function inspectImageQuality(imageBuffer, clientMetrics = {}) {
  * Intelligently applies preprocessing (contrast, sharpening, resizing) before OCR
  * Returns rich result with text, confidence, words, and enhanced image buffers
  */
-async function extractDocumentText(filePathOrBuffer, mimeType = 'application/pdf') {
+async function extractDocumentText(filePathOrBuffer, mimeType = null) {
   let buffer = null;
   let ext = '';
 
@@ -562,6 +562,8 @@ async function extractDocumentText(filePathOrBuffer, mimeType = 'application/pdf
       const parts = filePathOrBuffer.split(',');
       buffer = Buffer.from(parts[1], 'base64');
       if (parts[0].includes('pdf')) ext = '.pdf';
+      else if (parts[0].includes('png')) ext = '.png';
+      else if (parts[0].includes('jpeg') || parts[0].includes('jpg')) ext = '.jpg';
     }
   } else if (Buffer.isBuffer(filePathOrBuffer)) {
     buffer = filePathOrBuffer;
@@ -580,7 +582,8 @@ async function extractDocumentText(filePathOrBuffer, mimeType = 'application/pdf
   if (!buffer || buffer.length === 0) return resultObj;
 
   // 1. If PDF (by extension, mime, or magic bytes %PDF-), parse text stream
-  const isPdf = ext === '.pdf' || mimeType === 'application/pdf' || buffer.slice(0, 5).toString() === '%PDF-';
+  const isImageExt = ['.jpg', '.jpeg', '.png', '.webp', '.bmp'].includes(ext);
+  const isPdf = !isImageExt && (ext === '.pdf' || mimeType === 'application/pdf' || buffer.slice(0, 5).toString() === '%PDF-');
   if (isPdf) {
     try {
       const pdfText = extractTextFromPdfBuffer(buffer);
@@ -801,10 +804,6 @@ async function validateAddressProofDocument({
     ocrConfidence: 0,
     confidenceLevel: 'LOW',
     unreadableFields: [],
-    frontOriginalBuffer: null,
-    frontEnhancedBuffer: null,
-    backOriginalBuffer: null,
-    backEnhancedBuffer: null,
     languageDetection: null,
     detectedLanguages: [],
     isMixedLanguage: false,
@@ -854,8 +853,6 @@ async function validateAddressProofDocument({
     if (!extractedFrontText && frontFileOrBuffer) {
       frontOcr = await extractDocumentText(frontFileOrBuffer);
       extractedFrontText = frontOcr.text || '';
-      result.frontOriginalBuffer = frontOcr.originalBuffer;
-      result.frontEnhancedBuffer = frontOcr.enhancedBuffer;
     }
 
     const frontDetect = detectDocumentTypeFromText(extractedFrontText);
@@ -907,8 +904,6 @@ async function validateAddressProofDocument({
     if (!extractedBackText && backFileOrBuffer) {
       backOcr = await extractDocumentText(backFileOrBuffer);
       extractedBackText = backOcr.text || '';
-      result.backOriginalBuffer = backOcr.originalBuffer;
-      result.backEnhancedBuffer = backOcr.enhancedBuffer;
     }
 
     const backDetect = detectDocumentTypeFromText(extractedBackText);

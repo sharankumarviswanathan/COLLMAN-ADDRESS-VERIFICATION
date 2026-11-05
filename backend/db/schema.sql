@@ -297,6 +297,7 @@ CREATE TABLE IF NOT EXISTS verification_progress (
   document_back_enhanced_path TEXT,
   address_proof_ocr_result TEXT,
   address_proof_decision TEXT,
+  document_address_match TEXT,
   declaration_accepted INTEGER DEFAULT 0,
   declaration_timestamp TEXT,
   last_saved_at TEXT DEFAULT CURRENT_TIMESTAMP

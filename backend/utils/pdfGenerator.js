@@ -203,8 +203,8 @@ function getDistanceAuditRule(ruleKey, distanceMeters) {
 // Load Comprehensive Verification Records from Database
 // ---------------------------------------------------------
 async function resolveComprehensiveCaseData(caseData) {
-  const empId = caseData.employee_id;
-  const refNo = caseData.case_reference || `AV-${empId}`;
+  const empId = typeof caseData === 'string' ? caseData : caseData.employee_id;
+  const refNo = (typeof caseData === 'object' && caseData.case_reference) || `AV-${empId}`;
 
   const employee = await query.get(
     'SELECT * FROM employees WHERE employee_id = ?',
@@ -428,66 +428,40 @@ function drawTableRow(doc, y, label1, val1, label2, val2, isEven = false, minRow
 }
 
 /**
- * Fetch and cache actual geographic map with HR and Live GPS pins
+ * Fetch dynamic Google Maps audit image strictly centered on employee's captured GPS coordinates
+ * Keyed by exact coordinates to prevent stale or cross-candidate cache leakage
  */
-async function getOrFetchRealMapImage(liveLat, liveLng, empId) {
-  if (!liveLat || !liveLng) return null;
+async function getOrFetchRealMapImage(liveLat, liveLng, empId, accuracyMeters) {
+  if (liveLat === null || liveLat === undefined || liveLng === null || liveLng === undefined) return null;
   const nLiveLat = parseFloat(liveLat), nLiveLng = parseFloat(liveLng);
   if (isNaN(nLiveLat) || isNaN(nLiveLng)) return null;
 
-  const mapFile = path.join(downloadsDir, `map_live_${empId || 'case'}.png`);
+  // Use unique map file keyed by coordinates to guarantee no cross-candidate or stale cache leakage
+  const safeId = String(empId || 'case').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const coordHash = `${nLiveLat.toFixed(6)}_${nLiveLng.toFixed(6)}`;
+  const mapFile = path.join(downloadsDir, `map_live_${safeId}_${coordHash}_z15_300dpi.png`);
 
-  // 1. PRIMARY PROVIDER: High-Resolution Real Google Maps with live location pin
+  if (fs.existsSync(mapFile)) {
+    try {
+      if (fs.statSync(mapFile).size > 10000) {
+        return mapFile;
+      }
+    } catch (e) {}
+  }
+
+  // PRIMARY PROVIDER: High-Resolution Real Google Maps Retina stitch with live pin & accuracy circle (300 DPI, Zoom 15)
   try {
-    const googleMapPath = await generateGoogleAuditMap(nLiveLat, nLiveLng, mapFile);
-    if (googleMapPath && fs.existsSync(googleMapPath)) {
+    const googleMapPath = await generateGoogleAuditMap(nLiveLat, nLiveLng, mapFile, accuracyMeters, 15);
+    if (googleMapPath && fs.existsSync(googleMapPath) && fs.statSync(googleMapPath).size > 10000) {
       return googleMapPath;
     }
   } catch (gErr) {
     console.warn('Google Maps tile generation warning:', gErr.message);
   }
 
-  // 2. FALLBACK PROVIDER
-  if (fs.existsSync(mapFile)) return mapFile;
-
-  const spnLat = '0.02400';
-  const spnLng = '0.04200';
-
-  const url = 'https://static-maps.yandex.ru/1.x/?' +
-    `ll=${nLiveLng},${nLiveLat}` +
-    `&spn=${spnLng},${spnLat}` +
-    '&size=650,250&l=map&lang=en_US' +
-    `&pt=${nLiveLng},${nLiveLat},pm2gnm`;
-
-  return new Promise((resolve) => {
-    const https = require('https');
-    const req = https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 4000 }, (res) => {
-      if (res.statusCode !== 200) {
-        if (fs.existsSync(mapFile)) return resolve(mapFile);
-        return resolve(null);
-      }
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => {
-        try {
-          fs.writeFileSync(mapFile, Buffer.concat(chunks));
-          resolve(mapFile);
-        } catch (e) {
-          if (fs.existsSync(mapFile)) return resolve(mapFile);
-          resolve(null);
-        }
-      });
-    });
-    req.on('error', () => {
-      if (fs.existsSync(mapFile)) return resolve(mapFile);
-      resolve(null);
-    });
-    req.on('timeout', () => {
-      req.destroy();
-      if (fs.existsSync(mapFile)) return resolve(mapFile);
-      resolve(null);
-    });
-  });
+  // If tiles cannot load, return null strictly adhering to Requirement 10
+  // (Do not display unrelated maps, static screenshots, or Yandex fallbacks)
+  return null;
 }
 
 // ---------------------------------------------------------
@@ -501,11 +475,12 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
       const fileName = `Collman_Address_Verification_${data.employee_id}_${refNo}.pdf`;
       const filePath = path.join(downloadsDir, fileName);
 
-      // Fetch actual geographic map image with employee live pin
+      // Fetch actual geographic map image with employee live pin and accuracy circle
       const mapImagePath = await getOrFetchRealMapImage(
         data.latitude,
         data.longitude,
-        data.employee_id
+        data.employee_id,
+        data.gps_accuracy
       );
 
       // Initialize with tight margins and buffering
@@ -673,7 +648,25 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
       yPos = drawTableRow(doc, yPos, 'Vicinity Corridor:', liveAreaDetails, 'Geo-Audit Status:', 'VERIFIED LIVE LOCATION', false, 15.5);
       yPos += 5;
 
-      // Real Geographic Map (175 pt high - Enlarged & Proportional)
+      // Map Header & Audit Legend (Clearly separated from map image - Requirement 11)
+      const legendH = 14;
+      doc.rect(36, yPos, 523, legendH).fillAndStroke('#F8FAFC', C.borderLight);
+
+      // Pin icon & legend
+      doc.circle(46, yPos + 7, 3.5).fill('#10B981');
+      doc.circle(46, yPos + 7, 1.5).fill('#FFFFFF');
+      doc.fillColor(C.textMain).fontSize(6.8).font('Helvetica-Bold').text('Employee Live GPS Location (Map Center)', 54, yPos + 3.8, { lineBreak: false });
+
+      // Accuracy radius legend
+      doc.circle(235, yPos + 7, 3.5).strokeColor('#10B981').lineWidth(0.8).stroke();
+      doc.fillColor(C.textSecondary).fontSize(6.5).font('Helvetica').text(`GPS Accuracy Radius: ${gpsAcc} [Verified Satellite Fix]`, 243, yPos + 3.8, { lineBreak: false });
+
+      // Resolution & Zoom info
+      doc.fillColor(C.textMuted).fontSize(6.2).font('Helvetica').text('300 DPI Real-Time Google Map • Zoom 15 Neighborhood View', 360, yPos + 3.8, { width: 194, align: 'right', lineBreak: false });
+
+      yPos += legendH;
+
+      // Real Geographic Map (175 pt high - Exact 300 DPI 2184x732 Proportional)
       const mapY = yPos;
       const mapH = 175;
 
@@ -686,31 +679,18 @@ async function generateVerificationReportPDF(caseDataInput, generatedBy = 'BGV R
           });
           doc.rect(36, mapY, 523, mapH).stroke(C.border);
 
-          // Top-Left Badge: Employee Live Location (Green Pin)
-          doc.roundedRect(42, mapY + 6, 175, 16, 3).fillAndStroke(C.white, C.border);
-          doc.circle(52, mapY + 14, 3.5).fill('#10B981');
-          doc.fillColor(C.success).fontSize(7).font('Helvetica-Bold').text('EMPLOYEE LIVE LOCATION (GREEN PIN)', 60, mapY + 10.5, { lineBreak: false });
-
-          // Top-Right Badge: GPS Accuracy Status Pill
-          doc.roundedRect(385, mapY + 6, 168, 16, 3).fillAndStroke(C.white, '#10B981');
-          doc.fillColor('#065F46').fontSize(7.2).font('Helvetica-Bold').text(`GPS ACCURACY: ${gpsAcc}  [VERIFIED]`, 385, mapY + 10.5, { width: 168, align: 'center', lineBreak: false });
-
-          // Bottom Coordinate & Area Details Badge (Sleek card)
-          doc.roundedRect(42, mapY + mapH - 22, 330, 16, 3).fillAndStroke('#FFFFFFF2', '#10B981');
-          doc.circle(50, mapY + mapH - 14, 2.5).fill('#10B981');
-          doc.fillColor(C.success).fontSize(6.6).font('Helvetica-Bold').text(`LIVE: ${empLat}, ${empLng} [${gpsAcc}] • ${liveAreaShort}`, 56, mapY + mapH - 17.5, { width: 312, ellipsis: true, lineBreak: false });
-
-          // Center-Right: Google Maps Attribution Tag
-          doc.roundedRect(522, mapY + mapH - 14, 27, 8, 2).fillAndStroke('#FFFFFFF2', C.borderLight);
-          doc.fillColor(C.textSecondary).fontSize(4.5).font('Helvetica-Bold').text('Google', 522, mapY + mapH - 12.5, { width: 27, align: 'center', lineBreak: false });
+          // Subtle Google Maps Attribution Tag (Lower Right Corner)
+          doc.roundedRect(524, mapY + mapH - 12, 31, 9, 2).fillAndStroke('#FFFFFFF0', '#CBD5E1');
+          doc.fillColor(C.textSecondary).fontSize(5).font('Helvetica-Bold').text('Google', 524, mapY + mapH - 10, { width: 31, align: 'center', lineBreak: false });
         } catch (imgErr) {
-          doc.rect(36, mapY, 523, mapH).fillAndStroke(C.cardBg, C.border);
-          doc.fillColor(C.textMuted).fontSize(9).font('Helvetica-Bold').text('GEOGRAPHIC AUDIT MAP', 36, mapY + (mapH / 2) - 6, { width: 523, align: 'center', lineBreak: false });
+          doc.rect(36, mapY, 523, mapH).fillAndStroke('#FEF2F2', '#FECACA');
+          doc.fillColor('#DC2626').fontSize(9).font('Helvetica-Bold').text('Map unavailable – location coordinates retained', 36, mapY + (mapH / 2) - 8, { width: 523, align: 'center', lineBreak: false });
+          doc.fillColor(C.textSecondary).fontSize(7.5).font('Helvetica').text(`Employee Live: ${empLat}, ${empLng}  |  GPS Accuracy: ${gpsAcc}  |  Locality: ${liveAreaShort}`, 36, mapY + (mapH / 2) + 6, { width: 523, align: 'center', lineBreak: false });
         }
       } else {
-        doc.rect(36, mapY, 523, mapH).fillAndStroke(C.cardBg, C.border);
-        doc.fillColor(C.textMuted).fontSize(9).font('Helvetica-Bold').text('GEOGRAPHIC AUDIT MAP', 36, mapY + (mapH / 2) - 10, { width: 523, align: 'center', lineBreak: false });
-        doc.fillColor(C.textSecondary).fontSize(7.5).font('Helvetica').text(`Employee Live: ${empLat}, ${empLng}  |  GPS Accuracy: ${gpsAcc}  |  Locality: ${liveAreaShort}`, 36, mapY + (mapH / 2) + 4, { width: 523, align: 'center', lineBreak: false });
+        doc.rect(36, mapY, 523, mapH).fillAndStroke('#F8FAFC', C.border);
+        doc.fillColor('#B91C1C').fontSize(9).font('Helvetica-Bold').text('Map unavailable – location coordinates retained', 36, mapY + (mapH / 2) - 8, { width: 523, align: 'center', lineBreak: false });
+        doc.fillColor(C.textSecondary).fontSize(7.5).font('Helvetica').text(`Employee Live: ${empLat}, ${empLng}  |  GPS Accuracy: ${gpsAcc}  |  Locality: ${liveAreaShort}`, 36, mapY + (mapH / 2) + 6, { width: 523, align: 'center', lineBreak: false });
       }
 
       yPos += mapH + 4;

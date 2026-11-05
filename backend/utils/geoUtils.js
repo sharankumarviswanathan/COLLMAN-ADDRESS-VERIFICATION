@@ -1203,10 +1203,18 @@ async function lookupLocationDetails(rawQuery, options = {}) {
  * - Tier 1: Google Maps Geocoding API (latlng)
  * - Tier 2: OpenStreetMap Nominatim Reverse Geocoding with Missing-Road & Zone Correction
  * - Tier 3: Geographic Intelligence Engine & Curated Ground Truth Reference
+ */
+const reverseGeocodeCache = new Map();
+
+/**
+ * Reverse geocode geographic coordinates (lat, lon) to road, locality, city, district, state, pincode.
+ * Cached in-memory and protected with network timeouts.
  *
- * @param {number|string} latInput
- * @param {number|string} lonInput
- * @param {Object} options
+ * @param {number|string|Object|Array} latInput
+ * @param {number|string} [lonInput]
+ * @param {Object} [options]
+ * @param {string} [options.googleApiKey]
+ * @param {boolean} [options.forceRefresh]
  * @returns {Promise<{ success: boolean, road: string, locality: string, locality_area: string, vicinity_corridor: string, city: string, district: string, state: string, pincode: string, formatted_address: string, provider: string, raw_response?: Object }>}
  */
 async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
@@ -1230,13 +1238,23 @@ async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
   }
 
   const { latitude, longitude } = parsed;
+  const cacheKey = `${latitude.toFixed(4)},${longitude.toFixed(4)}`;
+  if (!options.forceRefresh && reverseGeocodeCache.has(cacheKey)) {
+    return reverseGeocodeCache.get(cacheKey);
+  }
+
+  const saveAndReturn = (result) => {
+    reverseGeocodeCache.set(cacheKey, result);
+    return result;
+  };
+
   const googleApiKey = options.googleApiKey || process.env.GOOGLE_MAPS_API_KEY;
 
   // PROVIDER 1: Google Maps Reverse Geocoding API (Primary when configured)
   if (googleApiKey && String(googleApiKey).trim().length > 0) {
     try {
       const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${encodeURIComponent(String(googleApiKey).trim())}&region=in`;
-      const gRes = await fetch(gUrl);
+      const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(2500) });
       if (gRes.ok) {
         const gData = await gRes.json();
         if (gData.status === 'OK' && Array.isArray(gData.results) && gData.results.length > 0) {
@@ -1263,13 +1281,13 @@ async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
           const resolvedPincode = pincode || '600040';
           const vicinityCorridor = `Inner Ring Road (100 Feet Road) • ${resolvedLocality}, ${locality || 'Chennai'} - ${resolvedPincode}`;
 
-          return {
+          return saveAndReturn({
             success: true,
             provider: 'Google Maps Reverse Geocoding API',
             latitude,
             longitude,
-            road: road || 'Gandhi Street',
-            sublocality: sublocality2 || 'Old Tirumangalam',
+            road: road || sublocality2 || resolvedLocality || '',
+            sublocality: sublocality2 || resolvedLocality || '',
             locality: resolvedLocality,
             locality_area: `${resolvedLocality} (${resolvedPincode})`,
             vicinity_corridor: vicinityCorridor,
@@ -1279,7 +1297,7 @@ async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
             pincode: resolvedPincode,
             formatted_address: res.formatted_address || `${road}, ${resolvedLocality}, ${locality || 'Chennai'}, ${state || 'Tamil Nadu'} - ${resolvedPincode}, India`,
             raw_response: gData
-          };
+          });
         }
       }
     } catch (err) {
@@ -1292,7 +1310,8 @@ async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
   try {
     const nUrl = `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=jsonv2&addressdetails=1`;
     const nRes = await fetch(nUrl, {
-      headers: { 'User-Agent': 'CollmanAddressVerification/1.0 (internal-bgv@collman.com)' }
+      headers: { 'User-Agent': 'CollmanAddressVerification/1.0 (internal-bgv@collman.com)' },
+      signal: AbortSignal.timeout(2500)
     });
     if (nRes.ok) {
       nominatimData = await nRes.json();
@@ -1314,7 +1333,7 @@ async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
     const vicinity_corridor = 'Inner Ring Road (100 Feet Road) • Old Tirumangalam, Anna Nagar West, Chennai - 600040';
     const formatted_address = `${road}, ${sublocality}, Anna Nagar, ${city}, ${state} - ${pincode}, India`;
 
-    return {
+    return saveAndReturn({
       success: true,
       provider: nominatimData ? 'OpenStreetMap Nominatim (Enhanced)' : 'Google Maps Reference Engine',
       latitude,
@@ -1330,7 +1349,7 @@ async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
       pincode,
       formatted_address,
       raw_response: nominatimData
-    };
+    });
   }
 
   // Koyambedu / Maduravoyal corridor (strictly south of Cooum River: lat 13.0550 to <13.0740)
@@ -1345,7 +1364,7 @@ async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
     const vicinity_corridor = 'Inner Ring Road (IRR) • Koyambedu / Maduravoyal Border, Chennai - 600105';
     const formatted_address = `${road}, ${locality}, ${city}, ${state} - ${pincode}, India`;
 
-    return {
+    return saveAndReturn({
       success: true,
       provider: nominatimData ? 'OpenStreetMap Nominatim' : 'Google Maps Reference Engine',
       latitude,
@@ -1361,7 +1380,7 @@ async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
       pincode,
       formatted_address,
       raw_response: nominatimData
-    };
+    });
   }
 
   // Kolathur / Balaji Nagar corridor
@@ -1376,7 +1395,7 @@ async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
     const vicinity_corridor = 'Ramakrishna Nagar • Kolathur Arterial Corridor, Chennai - 600099';
     const formatted_address = `${road}, ${sublocality}, Kolathur, ${city}, ${state} - ${pincode}, India`;
 
-    return {
+    return saveAndReturn({
       success: true,
       provider: nominatimData ? 'OpenStreetMap Nominatim' : 'Google Maps Reference Engine',
       latitude,
@@ -1392,7 +1411,7 @@ async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
       pincode,
       formatted_address,
       raw_response: nominatimData
-    };
+    });
   }
 
   // Dynamic fallback from Nominatim data if available
@@ -1407,7 +1426,7 @@ async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
     const locality = suburb || city;
     const vicinity_corridor = `${road ? road + ' • ' : ''}${locality}, ${city} ${pincode ? '- ' + pincode : ''}`.trim();
 
-    return {
+    return saveAndReturn({
       success: true,
       provider: 'OpenStreetMap Nominatim',
       latitude,
@@ -1423,10 +1442,10 @@ async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
       pincode,
       formatted_address: nominatimData.display_name || `${road}, ${locality}, ${city}, ${state} ${pincode}, India`,
       raw_response: nominatimData
-    };
+    });
   }
 
-  return {
+  return saveAndReturn({
     success: true,
     provider: 'Geographic Intelligence Engine',
     latitude,
@@ -1441,7 +1460,7 @@ async function reverseGeocodeCoordinates(latInput, lonInput, options = {}) {
     state: 'Tamil Nadu',
     pincode: '600001',
     formatted_address: 'Chennai, Tamil Nadu, India'
-  };
+  });
 }
 
 /**

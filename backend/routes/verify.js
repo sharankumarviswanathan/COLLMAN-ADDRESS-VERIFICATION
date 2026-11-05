@@ -1750,25 +1750,12 @@ router.post('/upload-document', authenticateEmployeeSession, upload.fields([
       return res.status(400).json({ error: 'Please provide the BACK SIDE of the address proof document.' });
     }
 
-    // 3. Resolve or Generate Enhanced Front Image (Intelligent Preprocessing: Contrast + Sharpening)
+    // 3. Resolve or Generate Enhanced Front Image (Mobile Scanner: Boundary Detection + 4-Point Perspective Warp + Orientation Correction)
     let frontEnhancedInfo = null;
-    if (req.files && req.files['frontEnhanced']?.[0]) {
-      const file = req.files['frontEnhanced'][0];
-      frontEnhancedInfo = {
-        filePath: file.path,
-        fileName: file.originalname,
-        fileUrl: `/uploads/${file.filename}`
-      };
-    } else if (frontEnhancedBase64) {
-      const saved = saveBase64Image(frontEnhancedBase64, `doc_front_enhanced_${req.employee.employee_id}`);
-      frontEnhancedInfo = {
-        filePath: saved.filePath,
-        fileName: saved.fileName,
-        fileUrl: `/uploads/${saved.fileName}`
-      };
-    } else if (frontInfo.filePath && fs.existsSync(frontInfo.filePath) && !frontInfo.filePath.toLowerCase().endsWith('.pdf')) {
+    let frontDetectionWarning = null;
+    if (frontInfo.filePath && fs.existsSync(frontInfo.filePath) && !frontInfo.filePath.toLowerCase().endsWith('.pdf')) {
       try {
-        const prep = await preprocessDocumentImage(fs.readFileSync(frontInfo.filePath));
+        const prep = await preprocessDocumentImage(fs.readFileSync(frontInfo.filePath), { side: 'front', documentType });
         if (prep && prep.enhancedBuffer) {
           const enhancedName = `doc_front_enhanced_${req.employee.employee_id}_${Date.now()}.jpg`;
           const enhancedPath = path.join(uploadsDir, enhancedName);
@@ -1778,34 +1765,40 @@ router.post('/upload-document', authenticateEmployeeSession, upload.fields([
             fileName: enhancedName,
             fileUrl: `/uploads/${enhancedName}`
           };
+          if (prep.detectionFailed) {
+            frontDetectionWarning = prep.error;
+          }
         }
       } catch (pErr) {
         console.warn('Front document auto-enhancement warning:', pErr.message);
       }
     }
     if (!frontEnhancedInfo) {
-      frontEnhancedInfo = frontInfo;
+      if (req.files && req.files['frontEnhanced']?.[0]) {
+        const file = req.files['frontEnhanced'][0];
+        frontEnhancedInfo = {
+          filePath: file.path,
+          fileName: file.originalname,
+          fileUrl: `/uploads/${file.filename}`
+        };
+      } else if (frontEnhancedBase64) {
+        const saved = saveBase64Image(frontEnhancedBase64, `doc_front_enhanced_${req.employee.employee_id}`);
+        frontEnhancedInfo = {
+          filePath: saved.filePath,
+          fileName: saved.fileName,
+          fileUrl: `/uploads/${saved.fileName}`
+        };
+      } else {
+        frontEnhancedInfo = frontInfo;
+      }
     }
 
     // 4. Resolve or Generate Enhanced Back Image
     let backEnhancedInfo = null;
-    if (req.files && req.files['backEnhanced']?.[0]) {
-      const file = req.files['backEnhanced'][0];
-      backEnhancedInfo = {
-        filePath: file.path,
-        fileName: file.originalname,
-        fileUrl: `/uploads/${file.filename}`
-      };
-    } else if (backEnhancedBase64) {
-      const saved = saveBase64Image(backEnhancedBase64, `doc_back_enhanced_${req.employee.employee_id}`);
-      backEnhancedInfo = {
-        filePath: saved.filePath,
-        fileName: saved.fileName,
-        fileUrl: `/uploads/${saved.fileName}`
-      };
-    } else if (backInfo.filePath && fs.existsSync(backInfo.filePath) && !backInfo.filePath.toLowerCase().endsWith('.pdf')) {
+    let backDetectionWarning = null;
+    if (backInfo.filePath && fs.existsSync(backInfo.filePath) && !backInfo.filePath.toLowerCase().endsWith('.pdf')) {
       try {
-        const prep = await preprocessDocumentImage(fs.readFileSync(backInfo.filePath));
+        const prep = await preprocessDocumentImage(fs.readFileSync(backInfo.filePath), { side: 'back', documentType });
         if (prep && prep.enhancedBuffer) {
           const enhancedName = `doc_back_enhanced_${req.employee.employee_id}_${Date.now()}.jpg`;
           const enhancedPath = path.join(uploadsDir, enhancedName);
@@ -1815,13 +1808,32 @@ router.post('/upload-document', authenticateEmployeeSession, upload.fields([
             fileName: enhancedName,
             fileUrl: `/uploads/${enhancedName}`
           };
+          if (prep.detectionFailed) {
+            backDetectionWarning = prep.error;
+          }
         }
       } catch (pErr) {
         console.warn('Back document auto-enhancement warning:', pErr.message);
       }
     }
     if (!backEnhancedInfo) {
-      backEnhancedInfo = backInfo;
+      if (req.files && req.files['backEnhanced']?.[0]) {
+        const file = req.files['backEnhanced'][0];
+        backEnhancedInfo = {
+          filePath: file.path,
+          fileName: file.originalname,
+          fileUrl: `/uploads/${file.filename}`
+        };
+      } else if (backEnhancedBase64) {
+        const saved = saveBase64Image(backEnhancedBase64, `doc_back_enhanced_${req.employee.employee_id}`);
+        backEnhancedInfo = {
+          filePath: saved.filePath,
+          fileName: saved.fileName,
+          fileUrl: `/uploads/${saved.fileName}`
+        };
+      } else {
+        backEnhancedInfo = backInfo;
+      }
     }
 
     // 5. Run Intelligent OCR & Decision Engine
@@ -1845,6 +1857,12 @@ router.post('/upload-document', authenticateEmployeeSession, upload.fields([
     });
 
     const docDecision = validation.decision || (validation.valid ? 'ACCEPTED' : 'HR/BGV REVIEW REQUIRED');
+    const cleanValidation = { ...validation };
+    delete cleanValidation.frontOriginalBuffer;
+    delete cleanValidation.frontEnhancedBuffer;
+    delete cleanValidation.backOriginalBuffer;
+    delete cleanValidation.backEnhancedBuffer;
+    const validationJson = JSON.stringify(cleanValidation);
 
     // 6. Update verification progress with original and enhanced paths, OCR results, and decision
     await query.run(
@@ -1870,7 +1888,7 @@ router.post('/upload-document', authenticateEmployeeSession, upload.fields([
         backInfo.filePath,
         backInfo.fileName,
         backEnhancedInfo.filePath,
-        JSON.stringify(validation),
+        validationJson,
         docDecision,
         req.employee.employee_id
       ]
@@ -1941,6 +1959,7 @@ router.post('/upload-document', authenticateEmployeeSession, upload.fields([
       extractedName: validation.extractedName || '',
       extractedAddress: validation.extractedAddress || '',
       extractedPincode: validation.extractedPincode || '',
+      detectionWarning: frontDetectionWarning || backDetectionWarning || null,
       validation
     });
   } catch (err) {
